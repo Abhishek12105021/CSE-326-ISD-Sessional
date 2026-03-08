@@ -1,0 +1,1812 @@
+openapi: 3.0.3
+info:
+  title: YouTube API Services - Recommendation & Notification Architecture
+  description: |
+    ### Base URL
+
+    | Type | URL |
+    |------|-----|
+    | **All Traffic** | `https://api.youtube.com/api` |
+
+    > Internal endpoints are prefixed with `/internal/` and are blocked from external access at the API Gateway level.
+
+    ---
+
+    ### Module Overview
+
+    | # | Module | Submodules |
+    |---|--------|------------|
+    | 1 | **Unified Feed Generation & Content Discovery** | Auth & Sessions, Videos & Feeds |
+    | 2 | **Watch History Analysis & Behavior Tracking** | Video Playback & Streaming, Settings & Users |
+    | 3 | **User Preference & Personalization Control** | Engagement & Interactions, Playlists, Subscriptions, Inter-Service Data Services |
+    | 4 | **Notification System** | Notifications, Inter-Service Event Triggers |
+
+    ---
+
+    ### Authentication
+    All protected endpoints require a `Bearer` JWT token obtained from `POST /auth/google` or `POST /auth/refresh`.
+  version: 1.9.0
+servers:
+- url: https://api.youtube.com/api
+  description: API Gateway (routes /internal/* to microservices internally)
+tags:
+- name: Module 1 ▸ Auth & Sessions
+  description: |
+    **Module: Unified Feed Generation & Content Discovery**
+
+    User authentication via Google OAuth 2.0, JWT token lifecycle (issue, refresh, revoke),
+    and session initialization — capturing geo, device, and browser context used downstream
+    by the Recommendation Engine to personalize the feed.
+- name: Module 1 ▸ Videos & Feeds
+  description: |
+    **Module: Unified Feed Generation & Content Discovery**
+
+    Paginated endless-scroll home feed (delegates ranking to the AI Engine), individual
+    video metadata loading, related/up-next recommendations, recommendation strategy control,
+    and the internal raw video candidate endpoint consumed by the AI ranking models.
+- name: Module 2 ▸ Video Playback & Streaming
+  description: |
+    **Module: Watch History Analysis & Behavior Tracking**
+
+    Stream manifest retrieval, video chapter markers, watch-start event signaling,
+    real-time playback telemetry (PLAY / PAUSE / SEEK / BUFFER), cross-device
+    position sync, and watch summary submission to the Analytics Service.
+- name: Module 2 ▸ Settings & Users
+  description: |
+    **Module: Watch History Analysis & Behavior Tracking**
+
+    Watch history retrieval and deletion, user settings (privacy toggles, preference vector),
+    and the internal endpoint for the Analytics Service to append watch summaries to the
+    user's permanent database record.
+- name: Module 3 ▸ Engagement & Interactions
+  description: |
+    **Module: User Preference & Personalization Control**
+
+    Explicit video interactions (LIKE, DISLIKE, CLIP, SAVE), video statistics,
+    comments (read/write), share event logging, and algorithmic feed-correction
+    feedback signals (NOT_INTERESTED, DONT_RECOMMEND_CHANNEL).
+- name: Module 3 ▸ Playlists
+  description: |
+    **Module: User Preference & Personalization Control**
+
+    Full CRUD for user playlists and nested item management via
+    `/playlists/{playlistId}/items` and `/playlists/{playlistId}/items/{itemId}`.
+- name: Module 3 ▸ Subscriptions
+  description: |
+    **Module: User Preference & Personalization Control**
+
+    User channel subscription management — list, subscribe, and unsubscribe.
+    Bell-icon alert status is checked internally before dispatching Type 1 push notifications.
+- name: "Module 3 ▸ Inter-Service: Data Services"
+  description: |
+    **Module: User Preference & Personalization Control — INTERNAL**
+
+    Core database mutation and retrieval APIs used exclusively by internal microservices.
+    All routes prefixed `/internal/`. Blocked from external access at the gateway.
+- name: Module 4 ▸ Notifications
+  description: |
+    **Module: Notification System**
+
+    Client-facing notification inbox (list, mark as read) and push preference
+    management (global enable/disable toggle).
+- name: "Module 4 ▸ Inter-Service: Event Triggers"
+  description: |
+    **Module: Notification System — INTERNAL**
+
+    Async event webhooks that wake the Notification Manager. All routes prefixed `/internal/`.
+    **Type 1** — new upload trigger (Ingestion → Notification Manager → subscribers).
+    **Type 2** — AI relevance trigger (AI Engine → Notification Manager → target user).
+    Also covers delivery logging to prevent duplicate pushes.
+paths:
+  /auth/google:
+    post:
+      tags:
+      - Module 1 ▸ Auth & Sessions
+      summary: Authenticate via Google Account
+      description: Exchanges a Google OAuth 2.0 ID token or authorization code for a YouTube API session. Acts as both login and registration (if the YouTube profile doesn't exist yet).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GoogleAuthRequest"
+        required: true
+      responses:
+        "200":
+          description: Successfully authenticated; YouTube profile provisioned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /auth/refresh:
+    post:
+      tags:
+      - Module 1 ▸ Auth & Sessions
+      summary: Refresh JWT Token
+      description: Exchanges a valid refresh token for a new short-lived JWT access token.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/auth_refresh_body"
+        required: true
+      responses:
+        "200":
+          description: Tokens successfully refreshed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+  /auth/logout:
+    post:
+      tags:
+      - Module 1 ▸ Auth & Sessions
+      summary: Logout User
+      description: Invalidates the current session and revokes the active refresh token.
+      responses:
+        "204":
+          description: Successfully logged out.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+      security:
+      - BearerAuth: []
+  /auth/profile:
+    get:
+      tags:
+      - Module 1 ▸ Auth & Sessions
+      summary: Get Current User Profile
+      description: Retrieves the core identity profile of the currently authenticated user.
+      responses:
+        "200":
+          description: Successfully retrieved user profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+      security:
+      - BearerAuth: []
+  /sessions:
+    post:
+      tags:
+      - Module 1 ▸ Auth & Sessions
+      summary: Initialize Tracking Session
+      description: "Called when the app opens. Generates an interaction session ID and extracts contextual data (geo, device, browser) used later by the Recommendation Engine."
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SessionCreateRequest"
+        required: true
+      responses:
+        "201":
+          description: Session created with context tracking active.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionContext"
+      security:
+      - BearerAuth: []
+  /videos:
+    get:
+      tags:
+      - Module 1 ▸ Videos & Feeds
+      summary: List Videos (Home Feed)
+      description: |
+        Generates the dynamic Home Feed catalog, optimized for endless scrolling.
+        Delegates ranking to the Recommendation Engine based on the user's active session.
+        Branches internally into a **Cold Start** strategy (new users) or **Personalization** strategy (returning users).
+      parameters:
+      - name: sessionId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: quantity
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 15
+      - name: pageToken
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Paginated list of ranked video candidates.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoListResponse"
+        "429":
+          $ref: "#/components/responses/RateLimitError"
+      security:
+      - BearerAuth: []
+  /videos/{videoId}:
+    get:
+      tags:
+      - Module 1 ▸ Videos & Feeds
+      summary: Load Video Metadata
+      description: "Fetches specific video metadata, description, and statistics necessary prior to starting playback."
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Video details loaded successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Video"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /videos/{videoId}/related:
+    get:
+      tags:
+      - Module 1 ▸ Videos & Feeds
+      summary: Get Related Videos (Up Next)
+      description: Generates the sidebar/up-next recommendation feed based on the currently watching video and user context.
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Ranked list of related candidates.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoListResponse"
+      security:
+      - BearerAuth: []
+  /internal/recommendations-strategy:
+    put:
+      tags:
+      - Module 1 ▸ Videos & Feeds
+      summary: "[INTERNAL] Set Recommendation Strategy"
+      description: |
+        Configures the active recommendation strategy for the feed engine.
+        - **COLD_START** — new/anonymous users; falls back to trending/regional content.
+        - **PERSONALIZED** — returning users; uses watch history, preference vector, and session context.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/internal_recommendationsstrategy_body"
+        required: true
+      responses:
+        "200":
+          description: Strategy successfully applied.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/inline_response_200"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+      security:
+      - BearerAuth: []
+  /internal/videos/candidates:
+    get:
+      tags:
+      - Module 1 ▸ Videos & Feeds
+      summary: "[INTERNAL] Fetch Raw Video Catalog (AI Engine ➔ Data Services)"
+      description: Fetches raw video catalogs and trending scores so the AI Engine can run its ranking models.
+      parameters:
+      - name: region
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 500
+      responses:
+        "200":
+          description: Raw candidate list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoListResponse"
+  /videos/{videoId}/stream:
+    get:
+      tags:
+      - Module 2 ▸ Video Playback & Streaming
+      summary: Get Stream Manifest
+      description: "Retrieves the HLS or DASH manifest URLs, available resolutions, and DRM licenses required for the video player to fetch media chunks."
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Stream manifest URLs successfully retrieved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StreamManifestResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+      security:
+      - BearerAuth: []
+  /videos/{videoId}/chapters:
+    get:
+      tags:
+      - Module 2 ▸ Video Playback & Streaming
+      summary: Get Video Chapters
+      description: Retrieves timeline markers and chapters for the frontend player UI.
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Chapters retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChapterListResponse"
+  /videos/{videoId}/playback/start:
+    post:
+      tags:
+      - Module 2 ▸ Video Playback & Streaming
+      summary: Send Watch Start
+      description: Triggered immediately when the player successfully loads the first frame. Opens the session record in Data Services.
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/playback_start_body"
+        required: true
+      responses:
+        "202":
+          description: Watch start registered.
+      security:
+      - BearerAuth: []
+  /videos/playback/telemetry:
+    post:
+      tags:
+      - Module 2 ▸ Video Playback & Streaming
+      summary: Record Playback Telemetry
+      description: "Aggregates real-time events (`PLAY`, `PAUSE`, `SEEK`, `BUFFER`) while the user is watching."
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaybackEventBatch"
+        required: true
+      responses:
+        "202":
+          description: Telemetry events accepted into the aggregation queue.
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+      security:
+      - BearerAuth: []
+  /videos/{videoId}/watch-summary:
+    post:
+      tags:
+      - Module 2 ▸ Video Playback & Streaming
+      summary: Submit Watch Summary
+      description: "Called at end of session. Sends aggregated watch data (total minutes, skip ratio) to Analytics, which then updates Data Services."
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WatchSummary"
+        required: true
+      responses:
+        "202":
+          description: Watch summary accepted and queued for processing.
+      security:
+      - BearerAuth: []
+  /videos/{videoId}/playback/position:
+    put:
+      tags:
+      - Module 2 ▸ Video Playback & Streaming
+      summary: Sync Playback Position
+      description: Saves the user's current playback timestamp to enable the 'Resume Watching' feature across devices.
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/playback_position_body"
+        required: true
+      responses:
+        "204":
+          description: Playback position successfully synced.
+      security:
+      - BearerAuth: []
+  /history:
+    get:
+      tags:
+      - Module 2 ▸ Settings & Users
+      summary: Retrieve Watch History
+      description: "Fetches the user's previously watched videos, ordered chronologically."
+      parameters:
+      - name: pageToken
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Successfully retrieved watch history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoListResponse"
+      security:
+      - BearerAuth: []
+    delete:
+      tags:
+      - Module 2 ▸ Settings & Users
+      summary: Clear Watch History
+      description: "Triggers the `deleteHistory()` cascade, permanently removing all watch history entries."
+      responses:
+        "204":
+          description: History successfully cleared.
+      security:
+      - BearerAuth: []
+  /settings:
+    get:
+      tags:
+      - Module 2 ▸ Settings & Users
+      summary: Retrieve User Controls
+      description: "Fetches all user settings including `privacy`, `prefVector`, and `restrictions`."
+      responses:
+        "200":
+          description: User settings payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserSettings"
+      security:
+      - BearerAuth: []
+  /settings/privacy:
+    put:
+      tags:
+      - Module 2 ▸ Settings & Users
+      summary: Update Privacy Settings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/settings_privacy_body"
+        required: true
+      responses:
+        "200":
+          description: Privacy settings successfully updated.
+      security:
+      - BearerAuth: []
+  /settings/preferences:
+    put:
+      tags:
+      - Module 2 ▸ Settings & Users
+      summary: Modify Preference Vector
+      description: Manually tunes the user's algorithmic topical interest tags.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/settings_preferences_body"
+        required: true
+      responses:
+        "200":
+          description: Preference vector successfully updated.
+      security:
+      - BearerAuth: []
+  /internal/users/{userId}/history:
+    post:
+      tags:
+      - Module 2 ▸ Settings & Users
+      summary: "[INTERNAL] Append Watch History (Analytics ➔ Data Services)"
+      description: The Analytics Service appends the computed WatchSummary to the user's permanent database record.
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WatchSummary"
+        required: true
+      responses:
+        "201":
+          description: History record appended.
+  /videos/{videoId}/stats:
+    get:
+      tags:
+      - Module 3 ▸ Engagement & Interactions
+      summary: Get Video Statistics
+      description: "Retrieves detailed interaction statistics — views, likes, dislikes, comments, shares."
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Video statistics retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VideoStats"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+  /videos/{videoId}/interact:
+    post:
+      tags:
+      - Module 3 ▸ Engagement & Interactions
+      summary: Interact with Video (Like / Dislike / Clip / Save)
+      description: "Performs an explicit interaction on a video — LIKE, DISLIKE, CLIP, or SAVE."
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/VideoInteractionRequest"
+        required: true
+      responses:
+        "200":
+          description: Interaction recorded successfully.
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+      security:
+      - BearerAuth: []
+  /videos/{videoId}/feedback:
+    post:
+      tags:
+      - Module 3 ▸ Engagement & Interactions
+      summary: Submit Algorithmic Feedback
+      description: Handles feed-correction signals. Logged via `FeedbackManager` and triggers internal preference updates.
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/videoId_feedback_body"
+        required: true
+      responses:
+        "204":
+          description: Algorithmic feedback successfully applied.
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+      security:
+      - BearerAuth: []
+  /videos/{videoId}/comments:
+    get:
+      tags:
+      - Module 3 ▸ Engagement & Interactions
+      summary: List Video Comments
+      description: Retrieves a paginated list of top-level comments for the specified video.
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: pageToken
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: maxResults
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 20
+      responses:
+        "200":
+          description: Paginated list of comments.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommentListResponse"
+    post:
+      tags:
+      - Module 3 ▸ Engagement & Interactions
+      summary: Add a Comment
+      description: Posts a new top-level comment to the video.
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/videoId_comments_body"
+        required: true
+      responses:
+        "201":
+          description: Comment successfully posted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+      security:
+      - BearerAuth: []
+  /videos/{videoId}/share:
+    post:
+      tags:
+      - Module 3 ▸ Engagement & Interactions
+      summary: Record Share Interaction
+      description: Logs that the user shared this video. Provides a significant boost to the internal trending score.
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/videoId_share_body"
+        required: true
+      responses:
+        "202":
+          description: Share interaction recorded for analytics.
+      security:
+      - BearerAuth: []
+  /playlists:
+    get:
+      tags:
+      - Module 3 ▸ Playlists
+      summary: List Playlists
+      description: "Returns all playlists owned by the authenticated user, or specific playlists by ID."
+      parameters:
+      - name: id
+        in: query
+        description: Comma-separated list of playlist IDs to retrieve.
+        required: false
+        schema:
+          type: string
+      - name: mine
+        in: query
+        description: Set to true to retrieve the authenticated user's playlists.
+        required: false
+        schema:
+          type: boolean
+      - name: pageToken
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Successfully retrieved playlists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+      security:
+      - BearerAuth: []
+    post:
+      tags:
+      - Module 3 ▸ Playlists
+      summary: Create Playlist
+      description: Creates a new playlist for the authenticated user.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Playlist"
+        required: true
+      responses:
+        "201":
+          description: Playlist successfully created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Playlist"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+      security:
+      - BearerAuth: []
+  /playlists/{playlistId}:
+    get:
+      tags:
+      - Module 3 ▸ Playlists
+      summary: Get Playlist
+      description: Retrieves a single playlist by ID including its metadata.
+      parameters:
+      - name: playlistId
+        in: path
+        description: The unique ID of the playlist.
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Playlist retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Playlist"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+      security:
+      - BearerAuth: []
+    put:
+      tags:
+      - Module 3 ▸ Playlists
+      summary: Update Playlist
+      description: "Modifies a playlist's title, description, or privacy status."
+      parameters:
+      - name: playlistId
+        in: path
+        description: The unique ID of the playlist.
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Playlist"
+        required: true
+      responses:
+        "200":
+          description: Playlist successfully updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Playlist"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+      security:
+      - BearerAuth: []
+    delete:
+      tags:
+      - Module 3 ▸ Playlists
+      summary: Delete Playlist
+      description: Permanently deletes the specified playlist.
+      parameters:
+      - name: playlistId
+        in: path
+        description: The unique ID of the playlist.
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Playlist successfully deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+      security:
+      - BearerAuth: []
+  /playlists/{playlistId}/items:
+    get:
+      tags:
+      - Module 3 ▸ Playlists
+      summary: List Playlist Items
+      description: Returns all videos inside the specified playlist.
+      parameters:
+      - name: playlistId
+        in: path
+        description: The unique ID of the playlist.
+        required: true
+        schema:
+          type: string
+      - name: pageToken
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: maxResults
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 20
+      responses:
+        "200":
+          description: Successfully retrieved playlist items.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistItemListResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+    post:
+      tags:
+      - Module 3 ▸ Playlists
+      summary: Insert Playlist Item
+      description: Adds a video to the specified playlist.
+      parameters:
+      - name: playlistId
+        in: path
+        description: The unique ID of the playlist.
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaylistItem"
+        required: true
+      responses:
+        "201":
+          description: Item successfully added to the playlist.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistItem"
+        "400":
+          $ref: "#/components/responses/BadRequestError"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+      security:
+      - BearerAuth: []
+  /playlists/{playlistId}/items/{itemId}:
+    put:
+      tags:
+      - Module 3 ▸ Playlists
+      summary: Update Playlist Item
+      description: "Modifies a playlist item, e.g. updating its position."
+      parameters:
+      - name: playlistId
+        in: path
+        description: The unique ID of the playlist.
+        required: true
+        schema:
+          type: string
+      - name: itemId
+        in: path
+        description: The unique ID of the playlist item.
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlaylistItem"
+        required: true
+      responses:
+        "200":
+          description: Playlist item successfully updated.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlaylistItem"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+      security:
+      - BearerAuth: []
+    delete:
+      tags:
+      - Module 3 ▸ Playlists
+      summary: Delete Playlist Item
+      description: Removes a video from the playlist.
+      parameters:
+      - name: playlistId
+        in: path
+        description: The unique ID of the playlist.
+        required: true
+        schema:
+          type: string
+      - name: itemId
+        in: path
+        description: The unique ID of the playlist item.
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Playlist item successfully deleted.
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+        "404":
+          $ref: "#/components/responses/NotFoundError"
+      security:
+      - BearerAuth: []
+  /subscriptions:
+    get:
+      tags:
+      - Module 3 ▸ Subscriptions
+      summary: List Subscriptions
+      description: Retrieves a list of active channel subscriptions for the authenticated user.
+      responses:
+        "200":
+          description: Subscriptions retrieved successfully.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionListResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+      security:
+      - BearerAuth: []
+    post:
+      tags:
+      - Module 3 ▸ Subscriptions
+      summary: Insert Subscription
+      description: Adds a new channel subscription to the user's profile.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/subscriptions_body"
+        required: true
+      responses:
+        "201":
+          description: Subscribed successfully.
+      security:
+      - BearerAuth: []
+  /subscriptions/{channelId}:
+    delete:
+      tags:
+      - Module 3 ▸ Subscriptions
+      summary: Delete Subscription
+      description: Removes a specific channel from the user's subscriptions.
+      parameters:
+      - name: channelId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Unsubscribed successfully.
+      security:
+      - BearerAuth: []
+  /internal/users/{userId}/context:
+    get:
+      tags:
+      - "Module 3 ▸ Inter-Service: Data Services"
+      summary: Get User Context (AI Engine ➔ Data Services)
+      description: "Called by the AI Engine to fetch aggregated User Profile, Preferences, and Watch History to formulate the Personalization Strategy."
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Complete user context.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/inline_response_200_1"
+  /internal/users/{userId}/profile:
+    put:
+      tags:
+      - "Module 3 ▸ Inter-Service: Data Services"
+      summary: Sync Settings (User Control Center ➔ Data Services)
+      description: Cascades user settings updates down to the core database.
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserSettings"
+        required: true
+      responses:
+        "200":
+          description: Core profile updated.
+  /internal/users/{userId}/subscriptions/{channelId}/status:
+    get:
+      tags:
+      - "Module 3 ▸ Inter-Service: Data Services"
+      summary: Get Subscription Alert Status (Notification ➔ Data Services)
+      description: Checks if the user has the bell icon enabled for a specific channel before sending a Type 1 push.
+      parameters:
+      - name: userId
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: channelId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: Subscription alert status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/inline_response_200_2"
+  /internal/videos/{videoId}/trending-score:
+    put:
+      tags:
+      - "Module 3 ▸ Inter-Service: Data Services"
+      summary: Update Trending Score (Analytics/Feedback ➔ Data Services)
+      description: "Mutates the video's trending score based on explicit feedback, shares, or completed watch sessions."
+      parameters:
+      - name: videoId
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/videoId_trendingscore_body"
+        required: true
+      responses:
+        "200":
+          description: Trending score updated.
+  /notifications:
+    get:
+      tags:
+      - Module 4 ▸ Notifications
+      summary: List Notifications (Inbox)
+      description: Retrieves the authenticated user's recent notification inbox.
+      responses:
+        "200":
+          description: Array of notification payloads.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NotificationLog"
+        "401":
+          $ref: "#/components/responses/UnauthorizedError"
+      security:
+      - BearerAuth: []
+  /notifications/preferences:
+    get:
+      tags:
+      - Module 4 ▸ Notifications
+      summary: Get Push Preferences
+      responses:
+        "200":
+          description: Returns push preference settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+      security:
+      - BearerAuth: []
+    put:
+      tags:
+      - Module 4 ▸ Notifications
+      summary: Update Push Preferences
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationPreferences"
+        required: true
+      responses:
+        "200":
+          description: Notification preferences successfully updated.
+      security:
+      - BearerAuth: []
+  /notifications/{notificationId}/read:
+    put:
+      tags:
+      - Module 4 ▸ Notifications
+      summary: Mark Notification as Read
+      parameters:
+      - name: notificationId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "204":
+          description: Notification successfully marked as read.
+      security:
+      - BearerAuth: []
+  /internal/notifications/trigger/new-upload:
+    post:
+      tags:
+      - "Module 4 ▸ Inter-Service: Event Triggers"
+      summary: Trigger New Upload Notification (Ingestion ➔ Notification)
+      description: Wakes up the Notification Manager to fan out Type 1 push notifications to all bell-enabled subscribers of the channel.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/trigger_newupload_body"
+        required: true
+      responses:
+        "202":
+          description: Event accepted for async processing.
+  /internal/notifications/trigger/relevance-detected:
+    post:
+      tags:
+      - "Module 4 ▸ Inter-Service: Event Triggers"
+      summary: Trigger AI Relevance Push (AI Engine ➔ Notification)
+      description: Tells the Notification Manager a high-confidence video match was found — initiates a Type 2 recommendation push.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/trigger_relevancedetected_body"
+        required: true
+      responses:
+        "202":
+          description: Recommendation push queued.
+  /internal/notifications/log:
+    post:
+      tags:
+      - "Module 4 ▸ Inter-Service: Event Triggers"
+      summary: Log Notification Delivery (Notification ➔ Data Services)
+      description: Records that a notification was dispatched so the user isn't spammed with duplicates.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationLog"
+        required: true
+      responses:
+        "201":
+          description: Delivery log saved.
+components:
+  schemas:
+    GoogleAuthRequest:
+      required:
+      - idToken
+      type: object
+      properties:
+        idToken:
+          type: string
+          example: eyJhbGciOiJSUzI1NiIsImtpZCI6...
+    AuthResponse:
+      type: object
+      properties:
+        userId:
+          type: string
+          example: user_abc123
+        accessToken:
+          type: string
+          example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        refreshToken:
+          type: string
+          example: ref_token_xyz789_abcdef
+        expiresIn:
+          type: integer
+          example: 3600
+    UserProfile:
+      type: object
+      properties:
+        userId:
+          type: string
+          example: user_abc123
+        email:
+          type: string
+          example: user@gmail.com
+        displayName:
+          type: string
+          example: Tech Enthusiast
+        avatarUrl:
+          type: string
+          example: https://youtube.com/img/avatar.jpg
+        createdAt:
+          type: string
+          format: date-time
+          example: 2020-05-15T14:30:00Z
+    SessionCreateRequest:
+      type: object
+      properties:
+        deviceType:
+          type: string
+          example: iOS
+        appVersion:
+          type: string
+          example: 16.42.3
+    SessionContext:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          example: sess_987654321
+        geoContext:
+          type: string
+          example: US-NY
+    PageInfo:
+      type: object
+      properties:
+        totalResults:
+          type: integer
+          example: 1000
+        resultsPerPage:
+          type: integer
+          example: 10
+    VideoListResponse:
+      type: object
+      properties:
+        nextPageToken:
+          type: string
+          example: CAUQAA
+        pageInfo:
+          $ref: "#/components/schemas/PageInfo"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Video"
+    Video:
+      type: object
+      properties:
+        id:
+          type: string
+          example: dQw4w9WgXcQ
+        snippet:
+          $ref: "#/components/schemas/Video_snippet"
+        statistics:
+          $ref: "#/components/schemas/Video_statistics"
+    VideoStats:
+      type: object
+      properties:
+        videoId:
+          type: string
+          example: dQw4w9WgXcQ
+        likeCount:
+          type: integer
+          example: 16000000
+        dislikeCount:
+          type: integer
+          example: 12000
+        commentCount:
+          type: integer
+          example: 54302
+        shareCount:
+          type: integer
+          example: 8500
+      description: Full engagement statistics for a video. Like/dislike counts are authoritative here; Video.statistics carries only viewCount and trendingScore for feed rendering.
+    VideoInteractionRequest:
+      required:
+      - action
+      type: object
+      properties:
+        action:
+          type: string
+          example: SAVE
+          enum:
+          - LIKE
+          - DISLIKE
+          - CLIP
+          - SAVE
+        playlistId:
+          type: string
+          description: Required when action is SAVE.
+          example: PL1234567890
+        clipSettings:
+          $ref: "#/components/schemas/VideoInteractionRequest_clipSettings"
+    StreamManifestResponse:
+      type: object
+      properties:
+        hlsManifestUrl:
+          type: string
+          example: https://manifest.youtube.com/api/hls/playlist.m3u8
+        resolutions:
+          type: array
+          example:
+          - 1080p
+          - 720p
+          - 480p
+          - 360p
+          items:
+            type: string
+    ChapterListResponse:
+      type: object
+      properties:
+        chapters:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChapterListResponse_chapters"
+    Comment:
+      type: object
+      properties:
+        commentId:
+          type: string
+          example: cmnt_123abc
+        authorDisplayName:
+          type: string
+          example: Tech Enthusiast
+        text:
+          type: string
+          example: "This video was incredibly helpful, thanks for sharing!"
+        publishedAt:
+          type: string
+          format: date-time
+          example: 2023-10-24T23:22:28Z
+        likeCount:
+          type: integer
+          example: 42
+    CommentListResponse:
+      type: object
+      properties:
+        nextPageToken:
+          type: string
+          example: CAIQAA
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Comment"
+    Playlist:
+      type: object
+      properties:
+        id:
+          type: string
+          example: PL1234567890
+        snippet:
+          $ref: "#/components/schemas/Playlist_snippet"
+        status:
+          $ref: "#/components/schemas/Playlist_status"
+    PlaylistListResponse:
+      type: object
+      properties:
+        nextPageToken:
+          type: string
+          example: CAIQAA
+        pageInfo:
+          $ref: "#/components/schemas/PageInfo"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Playlist"
+    PlaylistItem:
+      type: object
+      properties:
+        id:
+          type: string
+          example: pli_abc123
+        snippet:
+          $ref: "#/components/schemas/PlaylistItem_snippet"
+    PlaylistItemListResponse:
+      type: object
+      properties:
+        nextPageToken:
+          type: string
+          example: CAIQAA
+        pageInfo:
+          $ref: "#/components/schemas/PageInfo"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlaylistItem"
+    SubscriptionListResponse:
+      type: object
+      properties:
+        nextPageToken:
+          type: string
+          example: CAIQAA
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubscriptionListResponse_items"
+    PlaybackEventBatch:
+      type: object
+      properties:
+        videoId:
+          type: string
+          example: dQw4w9WgXcQ
+        sessionId:
+          type: string
+          example: sess_987654321
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlaybackEventBatch_events"
+    WatchSummary:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          example: sess_987654321
+        watchMinutes:
+          type: number
+          example: 3.5
+        skipRatio:
+          type: number
+          example: 0.15
+    UserSettings:
+      type: object
+      properties:
+        privacy:
+          $ref: "#/components/schemas/UserSettings_privacy"
+        prefVector:
+          $ref: "#/components/schemas/UserSettings_prefVector"
+    NotificationLog:
+      type: object
+      properties:
+        notificationId:
+          type: string
+          example: notif_789
+        notificationType:
+          type: string
+          example: NEW_UPLOAD
+          enum:
+          - NEW_UPLOAD
+          - RECOMMENDED
+          - BROADCAST
+        status:
+          type: string
+          example: DELIVERED
+          enum:
+          - DELIVERED
+          - READ
+    NotificationPreferences:
+      type: object
+      properties:
+        pushEnabled:
+          type: boolean
+          example: true
+    ErrorProto:
+      type: object
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorProto_error"
+    auth_refresh_body:
+      required:
+      - refreshToken
+      type: object
+      properties:
+        refreshToken:
+          type: string
+          example: ref_token_xyz789...
+    internal_recommendationsstrategy_body:
+      required:
+      - strategy
+      type: object
+      properties:
+        strategy:
+          type: string
+          example: PERSONALIZED
+          enum:
+          - COLD_START
+          - PERSONALIZED
+        userId:
+          type: string
+          example: user_abc123
+        sessionId:
+          type: string
+          example: sess_987654321
+    inline_response_200:
+      type: object
+      properties:
+        strategy:
+          type: string
+          example: PERSONALIZED
+          enum:
+          - COLD_START
+          - PERSONALIZED
+        appliedAt:
+          type: string
+          format: date-time
+          example: 2025-03-01T10:00:00Z
+    playback_start_body:
+      type: object
+      properties:
+        sessionId:
+          type: string
+          example: sess_987654321
+    playback_position_body:
+      type: object
+      properties:
+        positionSeconds:
+          type: integer
+          example: 134
+    settings_privacy_body:
+      type: object
+      properties:
+        dataTrackingEnabled:
+          type: boolean
+          example: false
+    settings_preferences_body:
+      type: object
+      properties:
+        interests:
+          type: array
+          example:
+          - technology
+          - music
+          - gaming
+          items:
+            type: string
+    videoId_feedback_body:
+      required:
+      - action
+      type: object
+      properties:
+        action:
+          type: string
+          example: NOT_INTERESTED
+          enum:
+          - NOT_INTERESTED
+          - DONT_RECOMMEND_CHANNEL
+    videoId_comments_body:
+      required:
+      - text
+      type: object
+      properties:
+        text:
+          type: string
+          example: "This video was incredibly helpful, thanks for sharing!"
+    videoId_share_body:
+      type: object
+      properties:
+        platform:
+          type: string
+          example: twitter
+    subscriptions_body:
+      type: object
+      properties:
+        channelId:
+          type: string
+          example: UC_x5XG1OV2P6uZZ5FSM9Ttw
+    inline_response_200_1:
+      type: object
+      properties:
+        profile:
+          $ref: "#/components/schemas/UserSettings"
+        recentHistoryIds:
+          type: array
+          items:
+            type: string
+    inline_response_200_2:
+      type: object
+      properties:
+        alertsEnabled:
+          type: boolean
+          example: true
+    videoId_trendingscore_body:
+      type: object
+      properties:
+        scoreDelta:
+          type: number
+          example: 2.5
+        source:
+          type: string
+          example: FeedbackCollector
+    trigger_newupload_body:
+      type: object
+      properties:
+        channelId:
+          type: string
+          example: c456
+        videoId:
+          type: string
+          example: v123
+    trigger_relevancedetected_body:
+      type: object
+      properties:
+        userId:
+          type: string
+          example: u001
+        videoId:
+          type: string
+          example: v123
+        relevanceScore:
+          type: number
+          example: 0.98
+    Video_snippet:
+      type: object
+      properties:
+        channelId:
+          type: string
+          example: UC38IQsAvIsxxjztdMZQtwHA
+        title:
+          type: string
+          example: Never Gonna Give You Up
+        durationSeconds:
+          type: integer
+          description: Total video length in seconds.
+          example: 212
+    Video_statistics:
+      type: object
+      properties:
+        viewCount:
+          type: integer
+          example: 1483929411
+        trendingScore:
+          type: number
+          example: 98.4
+      description: "Lightweight counters for feed rendering. Full engagement stats via GET /videos/{videoId}/stats."
+    VideoInteractionRequest_clipSettings:
+      type: object
+      properties:
+        startTimeMs:
+          type: integer
+          example: 15000
+        endTimeMs:
+          type: integer
+          example: 45000
+      description: Required when action is CLIP.
+    ChapterListResponse_chapters:
+      type: object
+      properties:
+        title:
+          type: string
+          example: Introduction
+        startTimestamp:
+          type: integer
+          example: 0
+    Playlist_snippet:
+      type: object
+      properties:
+        title:
+          type: string
+          example: My Favorite Music
+        description:
+          type: string
+          example: A collection of the best tracks.
+    Playlist_status:
+      type: object
+      properties:
+        privacyStatus:
+          type: string
+          example: public
+          enum:
+          - public
+          - unlisted
+          - private
+    PlaylistItem_snippet_resourceId:
+      type: object
+      properties:
+        videoId:
+          type: string
+          example: dQw4w9WgXcQ
+    PlaylistItem_snippet:
+      type: object
+      properties:
+        playlistId:
+          type: string
+          example: PL1234567890
+        position:
+          type: integer
+          example: 0
+        resourceId:
+          $ref: "#/components/schemas/PlaylistItem_snippet_resourceId"
+    SubscriptionListResponse_items:
+      type: object
+      properties:
+        id:
+          type: string
+          example: su_1234567890
+    PlaybackEventBatch_events:
+      type: object
+      properties:
+        eventType:
+          type: string
+          example: PLAY
+          enum:
+          - PLAY
+          - PAUSE
+          - SEEK
+          - BUFFER
+        timestamp:
+          type: number
+          example: 1699564800000
+    UserSettings_privacy:
+      type: object
+      properties:
+        dataTrackingEnabled:
+          type: boolean
+          example: true
+    UserSettings_prefVector:
+      type: object
+      properties:
+        interests:
+          type: array
+          example:
+          - music
+          - gaming
+          items:
+            type: string
+    ErrorProto_error:
+      type: object
+      properties:
+        code:
+          type: integer
+          example: 400
+        message:
+          type: string
+          example: Invalid Request
+  responses:
+    BadRequestError:
+      description: Bad Request — invalid parameters or payload.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorProto"
+    UnauthorizedError:
+      description: Unauthorized — missing or invalid Bearer token.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorProto"
+    NotFoundError:
+      description: Not Found — resource does not exist.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorProto"
+    RateLimitError:
+      description: Too Many Requests — rate limit exceeded.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorProto"
+  securitySchemes:
+    BearerAuth:
+      type: http
+      description: OAuth 2.0 Bearer token. Obtain via `POST /auth/google` or `POST /auth/refresh`.
+      scheme: bearer
+      bearerFormat: JWT
