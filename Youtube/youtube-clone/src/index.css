@@ -1,0 +1,78 @@
+/* Global Reset & Styles */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: "Roboto", Arial, sans-serif;
+  background-color: #fff;
+  color: #0f0f0f;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  text-decoration: none;
+  color: inherit;
+}
+
+button {
+  font-family: "Roboto", Arial, sans-serif;
+}
+
+/* App Layout */
+.app {
+  display: flex;
+  padding-top: 56px;
+}
+
+.app__content {
+  flex: 1;
+  margin-left: 240px;
+  padding: 16px 0;
+  min-height: calc(100vh - 56px);
+  transition: margin-left 0.2s ease-in-out;
+}
+
+.app__content--collapsed {
+  margin-left: 72px;
+}
+
+.app__content--no-sidebar {
+  margin-left: 0;
+}
+
+/* Scrollbar Global */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 4px;
+}
+
+body:hover ::-webkit-scrollbar-thumb {
+  background-color: #ccc;
+}
+
+/* Responsive */
+@media (max-width: 1312px) {
+  .app__content {
+    margin-left: 72px;
+  }
+}
+
+@media (max-width: 600px) {
+  .app__content {
+    margin-left: 0;
+  }
+}

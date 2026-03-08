@@ -1,0 +1,141 @@
+.video-card {
+  cursor: pointer;
+  margin-bottom: 24px;
+}
+
+.video-card__thumbnail-container {
+  position: relative;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  background-color: #e5e5e5;
+}
+
+.video-card__thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform 0.3s;
+}
+
+.video-card:hover .video-card__thumbnail {
+  transform: scale(1.05);
+}
+
+.video-card__duration {
+  position: absolute;
+  bottom: 4px;
+  right: 4px;
+  background-color: rgba(0, 0, 0, 0.8);
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.video-card__duration--live {
+  background-color: #cc0000;
+}
+
+.video-card__info {
+  display: flex;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.video-card__avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.video-card__details {
+  flex: 1;
+  overflow: hidden;
+}
+
+.video-card__title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  color: #0f0f0f;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.video-card__channel {
+  font-size: 12px;
+  color: #606060;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.video-card__channel:hover {
+  color: #0f0f0f;
+}
+
+.video-card__verified {
+  font-size: 14px;
+  color: #606060;
+}
+
+.video-card__meta {
+  font-size: 12px;
+  color: #606060;
+}
+
+.video-card__meta span + span::before {
+  content: " • ";
+}
+
+/* Category Pills / Chips */
+.category-bar {
+  display: flex;
+  gap: 12px;
+  padding: 12px 0;
+  overflow-x: auto;
+  position: sticky;
+  top: 56px;
+  background-color: #fff;
+  z-index: 100;
+}
+
+.category-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.category-pill {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: none;
+  background-color: #f2f2f2;
+  color: #0f0f0f;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  font-family: 'Roboto', sans-serif;
+  transition: background-color 0.2s;
+}
+
+.category-pill:hover {
+  background-color: #e5e5e5;
+}
+
+.category-pill--active {
+  background-color: #0f0f0f;
+  color: #fff;
+}
+
+.category-pill--active:hover {
+  background-color: #272727;
+}
