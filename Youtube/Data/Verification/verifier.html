@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>YouTube Embed Verifier V4</title>
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <style>
+    :root { --bg: #0f172a; --panel: #1e293b; --text: #e2e8f0; --accent: #3b82f6; --success: #10b981; --error: #ef4444; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); padding: 20px; margin: 0; display: flex; flex-direction: column; height: 100vh; box-sizing: border-box; }
+    h2 { margin: 0 0 15px 0; color: #fff; }
+    
+    .warning-banner { background: #ca8a04; color: #fff; padding: 10px; border-radius: 6px; font-weight: bold; margin-bottom: 15px; text-align: center; }
+    
+    .top-panel { background: var(--panel); padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+    .controls { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+    input[type="file"] { cursor: pointer; background: #334155; padding: 8px; border-radius: 4px; border: 1px solid #475569; color: white;}
+    button { padding: 10px 20px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; transition: 0.2s; color: white; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-start { background: var(--success); }
+    .btn-stop { background: var(--error); }
+    .btn-export { background: var(--accent); }
+    
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; text-align: center; margin-bottom: 15px; }
+    .stat-box { background: #334155; padding: 15px; border-radius: 6px; }
+    .stat-box span { display: block; font-size: 24px; font-weight: bold; margin-top: 5px; }
+    .text-success { color: var(--success); }
+    .text-error { color: var(--error); }
+
+    .main-content { display: flex; gap: 20px; flex: 1; min-height: 0; }
+    
+    /* Live Log Console */
+    .log-panel { flex: 2; background: var(--panel); border-radius: 8px; padding: 15px; display: flex; flex-direction: column; }
+    .log-container { flex: 1; background: #0b1120; border-radius: 4px; padding: 10px; overflow-y: auto; font-family: monospace; font-size: 13px; border: 1px solid #334155; }
+    .log-entry { margin-bottom: 6px; border-bottom: 1px solid #1e293b; padding-bottom: 4px; }
+    .log-time { color: #64748b; margin-right: 8px; }
+    
+    /* Worker Slots */
+    .workers-panel { flex: 1; background: var(--panel); border-radius: 8px; padding: 15px; display: flex; flex-direction: column; gap: 10px;}
+    .worker-slot { background: #334155; padding: 15px; border-radius: 6px; border-left: 4px solid #64748b; display: flex; flex-direction: column; justify-content: center; height: 80px; }
+    .worker-slot.active { border-left-color: var(--accent); background: #1e3a8a; }
+    .worker-slot.done-good { border-left-color: var(--success); }
+    .worker-slot.done-bad { border-left-color: var(--error); }
+    
+    #hidden-players { position: absolute; left: -9999px; top: -9999px; }
+  </style>
+</head>
+<body>
+
+  <div class="warning-banner">
+    ⚠️ IMPORTANT: Pull this tab into its own separate window and do not minimize it. If you hide this tab behind another tab, your browser will put the script to sleep!
+  </div>
+
+  <div class="top-panel">
+    <h2>Embed Verifier Dashboard</h2>
+    <div class="controls">
+      <input type="file" id="csvFileInput" accept=".csv" />
+      <button id="startBtn" class="btn-start" disabled>▶ Start Auto-Check</button>
+      <button id="stopBtn" class="btn-stop" disabled>⏸ Pause</button>
+      <button id="exportBtn" class="btn-export" disabled>⬇ Export Verified IDs</button>
+    </div>
+
+    <div class="stats-grid">
+      <div class="stat-box">Total Queued<span id="statTotal">0</span></div>
+      <div class="stat-box">Processed<span id="statProcessed">0</span></div>
+      <div class="stat-box">Verified (Embeddable)<span id="statGood" class="text-success">0</span></div>
+      <div class="stat-box">Blocked (Domain/Age)<span id="statBad" class="text-error">0</span></div>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <div class="log-panel">
+      <h3 style="margin-top:0;">Live Event Log</h3>
+      <div class="log-container" id="logConsole">
+        <div class="log-entry"><span class="log-time">[System]</span> Waiting for CSV upload...</div>
+      </div>
+    </div>
+
+    <div class="workers-panel">
+      <h3 style="margin-top:0;">Active Connections (Max 4)</h3>
+      <div class="worker-slot" id="worker-0">Worker 1: Idle</div>
+      <div class="worker-slot" id="worker-1">Worker 2: Idle</div>
+      <div class="worker-slot" id="worker-2">Worker 3: Idle</div>
+      <div class="worker-slot" id="worker-3">Worker 4: Idle</div>
+    </div>
+  </div>
+
+  <div id="hidden-players"></div>
+
+  <script>
+    let allIds = [];
+    let goodIds = [];
+    let badIds = [];
+    let queue = [];
+    let goodIdSet = new Set();
+    
+    let isRunning = false;
+    let activeWorkers = 0;
+    const MAX_CONCURRENT = 4; 
+    const TIMEOUT_MS = 2500; 
+    let workerStatus = [false, false, false, false]; // Track which visual slots are busy
+
+    function normalizeCell(value) {
+      return value
+        .replace(/^\uFEFF/, '')
+        .replace(/^"|"$/g, '')
+        .trim();
+    }
+
+    function isLikelyHeader(value) {
+      const v = value.toLowerCase();
+      return v === 'video_id' || v === 'verified_video_id' || v === 'id' || v === 'youtube_id';
+    }
+
+    function isValidYouTubeId(value) {
+      return /^[A-Za-z0-9_-]{11}$/.test(value);
+    }
+
+    function log(message, type = 'info') {
+      const consoleEl = document.getElementById('logConsole');
+      const time = new Date().toLocaleTimeString([], {hour12: false});
+      let color = '#e2e8f0';
+      if (type === 'good') color = '#10b981';
+      if (type === 'bad') color = '#ef4444';
+      if (type === 'warn') color = '#eab308';
+
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<span class="log-time">[${time}]</span> <span style="color:${color}">${message}</span>`;
+      consoleEl.prepend(entry); // Add to top so it scrolls down naturally
+      
+      // Keep log from eating all RAM
+      if (consoleEl.children.length > 200) {
+        consoleEl.removeChild(consoleEl.lastChild);
+      }
+    }
+
+    // 1. File Upload
+    document.getElementById('csvFileInput').addEventListener('change', function(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(event) {
+        // Strip carriage returns (\r) and split by newline, grab first column
+        const rawIds = event.target.result
+          .replace(/\r/g, '')
+          .split('\n')
+          .map(line => normalizeCell(line.split(',')[0] || ''))
+          .filter(id => id.length > 0)
+          .filter(id => !isLikelyHeader(id))
+          .filter(id => isValidYouTubeId(id));
+
+        allIds = Array.from(new Set(rawIds));
+        const duplicateCount = rawIds.length - allIds.length;
+        
+        document.getElementById('statTotal').innerText = allIds.length;
+        document.getElementById('startBtn').disabled = false;
+        document.getElementById('startBtn').innerText = '▶ Start Auto-Check';
+        log(`Loaded ${rawIds.length} valid rows from CSV. Unique IDs queued: ${allIds.length}${duplicateCount > 0 ? ` (removed ${duplicateCount} duplicates)` : ''}.`, 'info');
+        resetApp();
+      };
+      reader.readAsText(file);
+    });
+
+    function resetApp() {
+      goodIds = [];
+      badIds = [];
+      queue = [...allIds];
+      goodIdSet = new Set();
+      updateStats();
+    }
+
+    // 2. Buttons
+    document.getElementById('startBtn').addEventListener('click', () => {
+      isRunning = true;
+      document.getElementById('startBtn').disabled = true;
+      document.getElementById('stopBtn').disabled = false;
+      document.getElementById('exportBtn').disabled = false;
+      log("Bot Started. Processing queue...", 'good');
+      processQueue();
+    });
+
+    document.getElementById('stopBtn').addEventListener('click', () => {
+      isRunning = false;
+      document.getElementById('startBtn').disabled = false;
+      document.getElementById('stopBtn').disabled = true;
+      log("Bot Paused. Waiting for current workers to finish...", 'warn');
+    });
+
+    // 3. Core Logic
+    function processQueue() {
+      if (!isRunning) return; 
+
+      if (queue.length === 0 && activeWorkers === 0) {
+        isRunning = false;
+        document.getElementById('startBtn').innerText = "Finished!";
+        document.getElementById('stopBtn').disabled = true;
+        log(`Run Complete! Found ${goodIds.length} valid embeds.`, 'good');
+        return;
+      }
+
+      while (activeWorkers < MAX_CONCURRENT && queue.length > 0) {
+        // Find an empty visual slot
+        const slotIndex = workerStatus.findIndex(status => status === false);
+        if(slotIndex !== -1) {
+            const videoId = queue.shift();
+            workerStatus[slotIndex] = true; 
+            activeWorkers++;
+            testVideo(videoId, slotIndex);
+        }
+      }
+    }
+
+    function testVideo(id, slotIndex) {
+      const slotEl = document.getElementById(`worker-${slotIndex}`);
+      slotEl.className = 'worker-slot active';
+      slotEl.innerText = `Worker ${slotIndex + 1}: Testing [${id}]...`;
+
+      const container = document.createElement('div');
+      container.id = 'yt-' + id;
+      document.getElementById('hidden-players').appendChild(container);
+
+      let isResolved = false;
+
+      const player = new YT.Player('yt-' + id, {
+        height: '150',
+        width: '150',
+        videoId: id,
+        events: {
+          'onReady': function(event) {
+            setTimeout(() => {
+              if (!isResolved) {
+                isResolved = true;
+                if (!goodIdSet.has(id)) {
+                  goodIdSet.add(id);
+                  goodIds.push(id);
+                }
+                log(`✅ ${id} - Allowed`, 'good');
+                cleanup(player, container, slotIndex, 'good');
+              }
+            }, TIMEOUT_MS);
+          },
+          'onError': function(event) {
+            if (!isResolved) {
+              isResolved = true;
+              badIds.push(id);
+              log(`❌ ${id} - Blocked (Error ${event.data})`, 'bad');
+              cleanup(player, container, slotIndex, 'bad');
+            }
+          }
+        }
+      });
+      
+      // Failsafe Timeout
+      setTimeout(() => {
+          if(!isResolved) {
+              isResolved = true;
+              badIds.push(id); 
+              log(`⚠️ ${id} - Timed Out (Assuming Blocked)`, 'warn');
+              cleanup(player, container, slotIndex, 'bad');
+          }
+      }, TIMEOUT_MS + 3000);
+    }
+
+    function cleanup(player, container, slotIndex, resultType) {
+      try { player.destroy(); } catch(e) {}
+      container.remove();
+      
+      const slotEl = document.getElementById(`worker-${slotIndex}`);
+      slotEl.className = resultType === 'good' ? 'worker-slot done-good' : 'worker-slot done-bad';
+      slotEl.innerText = `Worker ${slotIndex + 1}: Finishing...`;
+
+      // Tiny delay before freeing the slot to make the UI look smoother
+      setTimeout(() => {
+          workerStatus[slotIndex] = false;
+          slotEl.className = 'worker-slot';
+          slotEl.innerText = `Worker ${slotIndex + 1}: Idle`;
+          activeWorkers--;
+          updateStats();
+          processQueue();
+      }, 300);
+    }
+
+    function updateStats() {
+      document.getElementById('statProcessed').innerText = goodIds.length + badIds.length;
+      document.getElementById('statGood').innerText = goodIds.length;
+      document.getElementById('statBad').innerText = badIds.length;
+    }
+
+    // 4. Export
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      const uniqueGoodIds = Array.from(new Set(goodIds));
+
+      if(uniqueGoodIds.length === 0) {
+        alert("No valid embeds verified yet!");
+        return;
+      }
+      const csvContent = "data:text/csv;charset=utf-8,Verified_Video_ID\n" + uniqueGoodIds.join("\n");
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement("a");
+      link.setAttribute("href", encodedUri);
+      link.setAttribute("download", "verified_embeds.csv");
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      log(`Exported ${uniqueGoodIds.length} unique IDs to CSV.`, 'info');
+    });
+  </script>
+</body>
+</html>

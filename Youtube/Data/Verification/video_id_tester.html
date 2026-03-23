@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YouTube Video ID Tester</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, Segoe UI, Arial, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: #0f1115;
+      color: #e8e8e8;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 24px auto;
+      padding: 0 16px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .panel {
+      background: #1a1f29;
+      border: 1px solid #2a3140;
+      border-radius: 12px;
+      padding: 14px;
+    }
+
+    .row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button,
+    input[type="number"],
+    input[type="text"] {
+      height: 36px;
+      border-radius: 8px;
+      border: 1px solid #394256;
+      background: #222939;
+      color: #fff;
+      padding: 0 10px;
+      font-size: 14px;
+    }
+
+    button {
+      cursor: pointer;
+      background: #3657ff;
+      border-color: #3657ff;
+    }
+
+    button.secondary {
+      background: #222939;
+      border-color: #394256;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .status {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 14px;
+      color: #c9d0df;
+    }
+
+    iframe {
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      border: 0;
+      border-radius: 12px;
+      background: #000;
+    }
+
+    a {
+      color: #8fb0ff;
+      text-decoration: none;
+      margin-right: 14px;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    .muted {
+      font-size: 13px;
+      color: #aeb7c8;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="panel">
+      <div class="row" style="margin-bottom: 10px;">
+        <input id="csvInput" type="file" accept=".csv,text/csv" />
+        <button id="loadDefaultBtn" class="secondary">Load verified_embeds_CA.csv</button>
+      </div>
+      <div class="row" style="margin-bottom: 10px;">
+        <button id="prevBtn" class="secondary">◀ Prev</button>
+        <button id="nextBtn" class="secondary">Next ▶</button>
+        <button id="randomBtn" class="secondary">Random</button>
+        <input id="jumpInput" type="number" min="1" placeholder="Jump #" style="width: 100px;" />
+        <button id="jumpBtn" class="secondary">Go</button>
+      </div>
+      <div class="row" style="margin-bottom: 10px;">
+        <input id="idInput" type="text" placeholder="Video ID" style="width: 230px;" />
+        <button id="loadIdBtn" class="secondary">Load ID</button>
+      </div>
+      <div class="status">
+        <span id="count">Total: 0</span>
+        <span id="position">Position: -</span>
+        <span id="currentId">Current ID: -</span>
+      </div>
+      <div class="muted" style="margin-top: 8px;">
+        Tip: Left/Right arrow keys also navigate.
+      </div>
+    </div>
+
+    <div class="panel">
+      <iframe id="player" allowfullscreen></iframe>
+      <div style="margin-top: 10px;">
+        <a id="watchLink" target="_blank" rel="noopener">Open watch page</a>
+        <a id="embedLink" target="_blank" rel="noopener">Open embed URL</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const csvInput = document.getElementById('csvInput');
+    const loadDefaultBtn = document.getElementById('loadDefaultBtn');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const randomBtn = document.getElementById('randomBtn');
+    const jumpInput = document.getElementById('jumpInput');
+    const jumpBtn = document.getElementById('jumpBtn');
+    const idInput = document.getElementById('idInput');
+    const loadIdBtn = document.getElementById('loadIdBtn');
+
+    const countEl = document.getElementById('count');
+    const positionEl = document.getElementById('position');
+    const currentIdEl = document.getElementById('currentId');
+
+    const player = document.getElementById('player');
+    const watchLink = document.getElementById('watchLink');
+    const embedLink = document.getElementById('embedLink');
+
+    let ids = [];
+    let currentIndex = -1;
+
+    function toEmbedUrl(id) {
+      return `https://www.youtube.com/embed/${id}`;
+    }
+
+    function toWatchUrl(id) {
+      return `https://www.youtube.com/watch?v=${id}`;
+    }
+
+    function parseCsvToIds(csvText) {
+      const lines = csvText.split(/\r?\n/);
+      const parsed = [];
+      for (const line of lines) {
+        const cell = line.split(',')[0]?.trim().replace(/^"|"$/g, '');
+        if (!cell) continue;
+        if (cell.toLowerCase() === 'verified_video_id') continue;
+        parsed.push(cell);
+      }
+      return Array.from(new Set(parsed));
+    }
+
+    function setCurrent(index) {
+      if (!ids.length) {
+        currentIndex = -1;
+        player.src = '';
+        watchLink.href = '#';
+        embedLink.href = '#';
+        watchLink.textContent = 'Open watch page';
+        embedLink.textContent = 'Open embed URL';
+        countEl.textContent = 'Total: 0';
+        positionEl.textContent = 'Position: -';
+        currentIdEl.textContent = 'Current ID: -';
+        updateButtons();
+        return;
+      }
+
+      if (index < 0) index = 0;
+      if (index >= ids.length) index = ids.length - 1;
+      currentIndex = index;
+
+      const id = ids[currentIndex];
+      player.src = toEmbedUrl(id);
+      watchLink.href = toWatchUrl(id);
+      embedLink.href = toEmbedUrl(id);
+      countEl.textContent = `Total: ${ids.length}`;
+      positionEl.textContent = `Position: ${currentIndex + 1} / ${ids.length}`;
+      currentIdEl.textContent = `Current ID: ${id}`;
+      idInput.value = id;
+      updateButtons();
+    }
+
+    function updateButtons() {
+      const hasList = ids.length > 0;
+      prevBtn.disabled = !hasList;
+      nextBtn.disabled = !hasList;
+      randomBtn.disabled = !hasList;
+      jumpBtn.disabled = !hasList;
+    }
+
+    function loadIds(newIds) {
+      ids = newIds;
+      setCurrent(ids.length ? 0 : -1);
+    }
+
+    async function loadDefaultCsv() {
+      try {
+        const res = await fetch('./verified_embeds_CA.csv');
+        if (!res.ok) throw new Error('Could not load CSV');
+        const text = await res.text();
+        loadIds(parseCsvToIds(text));
+      } catch {
+        alert('Could not load verified_embeds_CA.csv automatically. Use the file picker instead.');
+      }
+    }
+
+    csvInput.addEventListener('change', async (event) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      loadIds(parseCsvToIds(text));
+    });
+
+    loadDefaultBtn.addEventListener('click', loadDefaultCsv);
+
+    prevBtn.addEventListener('click', () => setCurrent(currentIndex - 1));
+    nextBtn.addEventListener('click', () => setCurrent(currentIndex + 1));
+
+    randomBtn.addEventListener('click', () => {
+      if (!ids.length) return;
+      const randomIndex = Math.floor(Math.random() * ids.length);
+      setCurrent(randomIndex);
+    });
+
+    jumpBtn.addEventListener('click', () => {
+      const num = Number(jumpInput.value);
+      if (!Number.isInteger(num) || num < 1 || num > ids.length) return;
+      setCurrent(num - 1);
+    });
+
+    loadIdBtn.addEventListener('click', () => {
+      const id = idInput.value.trim();
+      if (!id) return;
+      player.src = toEmbedUrl(id);
+      watchLink.href = toWatchUrl(id);
+      embedLink.href = toEmbedUrl(id);
+      currentIdEl.textContent = `Current ID: ${id}`;
+      positionEl.textContent = 'Position: custom';
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowLeft') setCurrent(currentIndex - 1);
+      if (event.key === 'ArrowRight') setCurrent(currentIndex + 1);
+    });
+
+    updateButtons();
+  </script>
+</body>
+</html>
