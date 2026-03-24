@@ -1,0 +1,110 @@
+.signin-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: #0f0f0f;
+  padding: 20px;
+}
+
+.signin-card {
+  background: #212121;
+  border-radius: 8px;
+  padding: 48px;
+  max-width: 400px;
+  width: 100%;
+  text-align: center;
+}
+
+.signin-header {
+  margin-bottom: 32px;
+}
+
+.youtube-logo {
+  width: 90px;
+  height: 20px;
+  margin-bottom: 24px;
+}
+
+.signin-header h1 {
+  color: #fff;
+  font-size: 24px;
+  font-weight: 400;
+  margin: 0 0 8px;
+}
+
+.signin-header p {
+  color: #aaa;
+  font-size: 16px;
+  margin: 0;
+}
+
+.signin-loading {
+  color: #aaa;
+  font-size: 16px;
+  padding: 48px 0;
+}
+
+.signin-error {
+  background: #5c2828;
+  color: #f88;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.signin-options {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.google-signin-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 300px;
+  padding: 12px 24px;
+  background: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #3c4043;
+  cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+
+.google-signin-btn:hover:not(:disabled) {
+  background: #f8f9fa;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.google-signin-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.google-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.signin-footer {
+  margin-top: 32px;
+  font-size: 12px;
+  color: #717171;
+}
+
+.signin-footer a {
+  color: #3ea6ff;
+  text-decoration: none;
+}
+
+.signin-footer a:hover {
+  text-decoration: underline;
+}

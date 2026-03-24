@@ -1,13 +1,19 @@
 # Dependencies
 node_modules/
+frontend/node_modules/
+backend/__pycache__/
+backend/venv/
 
 # Build output
 dist/
+frontend/dist/
 
 # Environment files
 .env
 .env.local
 .env.*.local
+frontend/.env
+backend/.env
 
 # Editor directories and files
 .vscode/*
