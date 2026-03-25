@@ -1,30 +1,82 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import JWTError, jwt
+from jose import jwt, jwk
+from jose.exceptions import JWTError, JWKError
 from typing import Optional
+from datetime import datetime
+import httpx
+from functools import lru_cache
 from app.config import get_settings
-from app.core.supabase import get_supabase_admin
 
 settings = get_settings()
 security = HTTPBearer()
 optional_security = HTTPBearer(auto_error=False)
 
 
+@lru_cache(maxsize=1)
+def get_jwks():
+    """
+    Fetch and cache Supabase's JWKS (JSON Web Key Set).
+    Used to verify ES256 signed JWTs.
+    """
+    jwks_url = f"{settings.supabase_url}/auth/v1/.well-known/jwks.json"
+    response = httpx.get(jwks_url)
+    response.raise_for_status()
+    return response.json()
+
+
+def get_public_key(token: str):
+    """
+    Get the public key from JWKS that matches the token's kid.
+    """
+    # Get the key ID from token header
+    unverified_header = jwt.get_unverified_header(token)
+    kid = unverified_header.get("kid")
+    alg = unverified_header.get("alg")
+
+    jwks = get_jwks()
+
+    for key in jwks.get("keys", []):
+        if key.get("kid") == kid:
+            return jwk.construct(key, alg)
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unable to find appropriate key",
+    )
+
+
 def verify_supabase_token(token: str) -> dict:
     """
     Verify a Supabase-issued JWT token.
+    Supports both ES256 (asymmetric) and HS256 (symmetric) algorithms.
     Returns the decoded payload if valid.
     """
     try:
-        # Supabase uses HS256 with the JWT secret
-        payload = jwt.decode(
-            token,
-            settings.supabase_jwt_secret,
-            algorithms=["HS256"],
-            audience="authenticated"
-        )
+        # Get the algorithm from token header
+        unverified_header = jwt.get_unverified_header(token)
+        alg = unverified_header.get("alg")
+
+        if alg == "ES256":
+            # Use JWKS public key for ES256
+            public_key = get_public_key(token)
+            payload = jwt.decode(
+                token,
+                public_key,
+                algorithms=["ES256"],
+                audience="authenticated"
+            )
+        else:
+            # Fallback to HS256 with JWT secret
+            payload = jwt.decode(
+                token,
+                settings.supabase_jwt_secret,
+                algorithms=["HS256"],
+                audience="authenticated"
+            )
+
         return payload
-    except JWTError as e:
+    except (JWTError, JWKError) as e:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid token: {str(e)}",
@@ -37,7 +89,7 @@ async def get_current_user(
 ) -> dict:
     """
     Dependency to get current authenticated user.
-    Verifies Supabase JWT and fetches user profile.
+    Verifies Supabase JWT and returns user info from the token payload.
     """
     payload = verify_supabase_token(credentials.credentials)
 
@@ -48,17 +100,20 @@ async def get_current_user(
             detail="Invalid token payload",
         )
 
-    # Fetch user profile from database
-    supabase = get_supabase_admin()
-    result = supabase.table("users").select("*").eq("id", user_id).single().execute()
+    # Extract user data from JWT payload (no database call needed)
+    user_metadata = payload.get("user_metadata", {})
 
-    if not result.data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="User not found",
-        )
+    # Convert iat (issued at) Unix timestamp to datetime
+    iat = payload.get("iat")
+    created_at = datetime.fromtimestamp(iat) if iat else datetime.utcnow()
 
-    return result.data
+    return {
+        "id": user_id,
+        "email": payload.get("email"),
+        "display_name": user_metadata.get("full_name") or user_metadata.get("name"),
+        "avatar_url": user_metadata.get("avatar_url") or user_metadata.get("picture"),
+        "created_at": created_at,
+    }
 
 
 async def get_optional_user(

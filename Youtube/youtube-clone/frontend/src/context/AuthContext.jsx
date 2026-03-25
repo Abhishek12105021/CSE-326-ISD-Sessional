@@ -1,22 +1,17 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { guestStorage } from '../utils';
-import { authService, guestService } from '../services';
+import { authService } from '../services';
 import { API_BASE_URL } from '../config';
 
 const AuthContext = createContext(null);
-
-const REGION_STORAGE_KEY = 'youtube_clone_region';
-const DEFAULT_REGION = 'US';
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [guestId, setGuestId] = useState(null);
-  const [region, setRegion] = useState(() => {
-    return localStorage.getItem(REGION_STORAGE_KEY) || DEFAULT_REGION;
-  });
+  const [region, setRegion] = useState(() => guestStorage.getRegion());
 
   // Initialize auth state
   useEffect(() => {
@@ -126,24 +121,21 @@ export function AuthProvider({ children }) {
 
   // Update region for both guest and authenticated users
   const updateRegion = useCallback(async (newRegion) => {
-    // Always store in localStorage for persistence
-    localStorage.setItem(REGION_STORAGE_KEY, newRegion);
+    // Always store in localStorage for persistence (works for both guest and auth users)
+    guestStorage.setRegion(newRegion);
     setRegion(newRegion);
 
-    try {
-      if (session?.access_token) {
-        // Authenticated user - update profile via API
+    // For authenticated users, also update on server
+    if (session?.access_token) {
+      try {
         await authService.updateProfile(session.access_token, { region: newRegion });
-      } else if (guestId) {
-        // Guest user - update guest session via API
-        await guestService.updateSession(guestId, { region: newRegion });
+      } catch (error) {
+        console.error('Failed to update region on server:', error);
       }
-      return { success: true };
-    } catch (error) {
-      console.error('Failed to update region:', error);
-      return { success: false, error: error.message };
     }
-  }, [session, guestId]);
+
+    return { success: true };
+  }, [session]);
 
   const value = {
     user,
