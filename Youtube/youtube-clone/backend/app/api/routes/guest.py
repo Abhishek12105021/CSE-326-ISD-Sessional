@@ -45,6 +45,8 @@ async def create_guest_session(request: GuestSessionRequest):
     )
 
 
+
+
 @router.post("/feed", response_model=FeedResponse)
 async def get_guest_feed(request: GuestFeedRequest):
     """
@@ -62,6 +64,7 @@ async def get_guest_feed(request: GuestFeedRequest):
     """
 
     watched_uuids = request.watched_video_ids
+    
     interaction_count = len(watched_uuids)
 
     # Determine phase
@@ -72,12 +75,12 @@ async def get_guest_feed(request: GuestFeedRequest):
     elif 1 <= interaction_count <= 4:
         strategy = "phase_2_warm_up"
         taste = await build_taste_vector_from_uuids(watched_uuids)
-        videos = await generate_phase2_feed(taste, request.region, request.limit) if taste else await generate_phase1_feed(request.region, request.limit)
+        videos = await generate_phase2_feed(taste, request.region, request.limit) if taste is not None else await generate_phase1_feed(request.region, request.limit)
 
     else:
         strategy = "phase_3_personalized"
         taste = await build_taste_vector_from_uuids(watched_uuids)
-        videos = await generate_phase3_feed(taste, request.region, request.limit) if taste else await generate_phase1_feed(request.region, request.limit)
+        videos = await generate_phase3_feed(taste, request.region, request.limit) if taste is not None else await generate_phase1_feed(request.region, request.limit)
 
     # Transform
     def transform_video(v: dict) -> VideoResponse:
@@ -107,6 +110,13 @@ async def get_guest_feed(request: GuestFeedRequest):
         interaction_count=interaction_count,
         total=len(video_responses)
     )
+    
+    
+    
+    
+    
+    
+    
 
 
 @router.post("/watch", response_model=WatchEventResponse)
@@ -143,7 +153,7 @@ async def record_guest_watch(request: WatchEventRequest):
             watch_id=request.watch_id,
             watch_duration_seconds=request.watch_duration_seconds or 0
         )
-        return WatchEventResponse(success=True)
+        return WatchEventResponse(watch_id=request.watch_id, success=True)
 
 
 # @router.get("/session/{guest_uuid}", response_model=GuestSessionResponse)

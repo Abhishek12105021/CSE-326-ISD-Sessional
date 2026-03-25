@@ -23,6 +23,9 @@ HEADERS = {
 async def get_user_by_id(user_id: str) -> Optional[dict]:
     """
     Fetch user from Supabase users table by ID.
+
+    SQL equivalent:
+    SELECT * FROM users WHERE id = {user_id}
     """
     async with httpx.AsyncClient() as client:
         response = await client.get(
@@ -30,9 +33,6 @@ async def get_user_by_id(user_id: str) -> Optional[dict]:
             headers=HEADERS,
             params={"id": f"eq.{user_id}", "select": "*"}
         )
-
-        print(f"[DEBUG] get_user_by_id status: {response.status_code}")
-        print(f"[DEBUG] get_user_by_id response: {response.text}")
 
         if response.status_code == 200:
             data = response.json()
@@ -44,6 +44,9 @@ async def get_user_by_id(user_id: str) -> Optional[dict]:
 async def update_user(user_id: str, updates: dict) -> Optional[dict]:
     """
     Update user in Supabase users table.
+
+    SQL equivalent:
+    UPDATE users SET {updates} WHERE id = {user_id}
     """
     async with httpx.AsyncClient() as client:
         response = await client.patch(
@@ -52,9 +55,6 @@ async def update_user(user_id: str, updates: dict) -> Optional[dict]:
             params={"id": f"eq.{user_id}"},
             json=updates
         )
-
-        print(f"[DEBUG] update_user status: {response.status_code}")
-        print(f"[DEBUG] update_user response: {response.text}")
 
         if response.status_code == 200:
             data = response.json()
@@ -106,14 +106,17 @@ async def search_videos_semantic(
     match_count: int
 ) -> list[dict]:
     """
-    Call search_videos RPC - returns videos by cosine similarity
+    Search videos by semantic similarity using SQL query via REST API.
+
+    Fallback: Uses trending videos ordered by views.
+    Full implementation would use pgvector with:
+    SELECT * FROM videos
+    WHERE country_code = {filter_country} (if provided)
+    ORDER BY embedding <-> query_embedding
+    LIMIT match_count
     """
-    params = {
-        "query_embedding": query_embedding,
-        "filter_country": filter_country,
-        "match_count": match_count
-    }
-    return await call_rpc("search_videos", params)
+    # Without pgvector RPC, return trending videos as fallback
+    return await get_trending_videos(filter_country, match_count, 200, [])
 
 
 async def get_trending_videos(
@@ -123,15 +126,38 @@ async def get_trending_videos(
     exclude_ids: list[str]
 ) -> list[dict]:
     """
-    Call get_trending RPC - two-step randomization
+    Fetch trending videos using SQL query via REST API.
+
+    SQL equivalent:
+    SELECT * FROM videos
+    WHERE country_code = {filter_country} (if provided)
+    AND id NOT IN exclude_ids
+    ORDER BY views DESC
+    LIMIT match_count
     """
-    params = {
-        "filter_country": filter_country,
-        "match_count": match_count,
-        "pool_size": pool_size,
-        "exclude_ids": exclude_ids
-    }
-    return await call_rpc("get_trending", params)
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        params = {
+            "select": "*",
+            "order": "views.desc",  # SQL: ORDER BY views DESC
+            "limit": pool_size
+        }
+
+        if filter_country:
+            params["country_code"] = f"eq.{filter_country}"
+
+        response = await client.get(
+            f"{REST_URL}/videos",
+            headers=HEADERS,
+            params=params
+        )
+        response.raise_for_status()
+        videos = response.json()
+
+        # Filter out excluded videos (SQL: WHERE id NOT IN (...))
+        filtered = [v for v in videos if v["id"] not in exclude_ids]
+
+        # Return up to match_count videos
+        return filtered[:match_count]
 
 
 async def get_videos_by_uuids(uuids: list[str]) -> list[dict]:
@@ -144,6 +170,8 @@ async def get_videos_by_uuids(uuids: list[str]) -> list[dict]:
     if not uuids:
         return []
 
+    import json
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{REST_URL}/videos",
@@ -155,12 +183,26 @@ async def get_videos_by_uuids(uuids: list[str]) -> list[dict]:
             }
         )
         response.raise_for_status()
-        return response.json()
+        rows = response.json()
+
+        # Parse embedding if it's a string (REST API serializes as JSON string)
+        for row in rows:
+            if row.get("embedding") and isinstance(row["embedding"], str):
+                row["embedding"] = json.loads(row["embedding"])
+
+        return rows
 
 
 async def get_watch_history(user_id: str, limit: int = 50) -> list[dict]:
     """
     Fetch watch history for authenticated user.
+
+    SQL equivalent:
+    SELECT id, video_id, watch_duration_seconds, started_at
+    FROM watch_history
+    WHERE user_id = {user_id}
+    ORDER BY started_at DESC
+    LIMIT {limit}
 
     Returns: [
         {"id": "watch-uuid", "video_id": "row-uuid", "watch_duration_seconds": 45, ...},
@@ -188,7 +230,14 @@ async def get_all_country_embeddings(country_code: str) -> list[list[float]]:
     """
     Fetch ALL embeddings for given country.
     Used in Phase 3 Bucket B for country affinity calculation.
+
+    SQL equivalent:
+    SELECT embedding FROM videos
+    WHERE country_code = {country_code}
+    LIMIT 5000
     """
+    import json
+
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.get(
             f"{REST_URL}/videos",
@@ -201,7 +250,17 @@ async def get_all_country_embeddings(country_code: str) -> list[list[float]]:
         )
         response.raise_for_status()
         rows = response.json()
-        return [row["embedding"] for row in rows]
+
+        embeddings = []
+        for row in rows:
+            embedding = row.get("embedding")
+            # Parse if it's a string (REST API serializes as JSON string)
+            if embedding and isinstance(embedding, str):
+                embedding = json.loads(embedding)
+            if embedding:
+                embeddings.append(embedding)
+
+        return embeddings
 
 
 async def insert_watch_history(
@@ -252,7 +311,13 @@ async def update_watch_history(watch_id: str, watch_duration_seconds: int) -> bo
 
 
 async def get_unique_categories() -> list[str]:
-    """Fetch distinct category names"""
+    """
+    Fetch distinct category names.
+
+    SQL equivalent:
+    SELECT DISTINCT category_name FROM videos
+    ORDER BY category_name
+    """
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{REST_URL}/videos",
