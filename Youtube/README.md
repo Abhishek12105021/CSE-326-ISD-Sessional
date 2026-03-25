@@ -116,14 +116,14 @@ Current backend routes:
 - `GET /health`
 - `GET /api/auth/profile`
 - `PUT /api/auth/profile`
-- `GET /api/auth/preferences`
-- `PUT /api/auth/preferences`
-- `POST /api/auth/migrate-guest`
 - `POST /api/auth/logout`
 - `POST /api/auth/logout-all`
 - `POST /api/guest/session`
-- `GET /api/guest/session/{guest_uuid}`
-- `DELETE /api/guest/session/{guest_uuid}`
+- `GET /api/feed` (authenticated users)
+- `POST /api/guest/feed` (guest users)
+- `GET /api/trending`
+- `GET /api/categories`
+- `POST /api/guest/watch`
 
 ### 3. Supabase and Database Layer
 
@@ -343,8 +343,7 @@ The frontend auth flow currently works like this:
 1. Supabase initializes on app startup
 2. If the user is not signed in, a guest UUID is created in `localStorage`
 3. If the user signs in with Google, Supabase returns a session
-4. If a previous guest UUID exists, the frontend calls `/api/auth/migrate-guest`
-5. Navbar state updates based on authentication status
+4. Navbar state updates based on authentication status
 
 #### Frontend data mode
 
@@ -364,7 +363,7 @@ Important backend files:
 - `backend/app/main.py` - FastAPI app entry point and router registration
 - `backend/app/config.py` - environment-variable configuration
 - `backend/app/api/deps.py` - Supabase JWT verification and current-user dependency
-- `backend/app/api/routes/auth.py` - profile/preferences/migration/logout endpoints
+- `backend/app/api/routes/auth.py` - profile and logout endpoints
 - `backend/app/api/routes/guest.py` - guest-session endpoints
 - `backend/app/core/supabase.py` - service-role Supabase client
 

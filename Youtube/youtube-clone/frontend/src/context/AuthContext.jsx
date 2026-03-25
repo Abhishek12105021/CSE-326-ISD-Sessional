@@ -35,12 +35,8 @@ export function AuthProvider({ children }) {
           const previousGuestId = guestStorage.getRawGuestId();
 
           if (previousGuestId) {
-            try {
-              await authService.migrateGuestData(session.access_token, previousGuestId);
-              guestStorage.clearGuestId();
-            } catch (error) {
-              console.error('Guest migration failed:', error);
-            }
+            // Clear guest data (managed via localStorage)
+            guestStorage.clearGuestId();
           }
 
           setGuestId(null);

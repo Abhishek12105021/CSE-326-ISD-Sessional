@@ -3,9 +3,10 @@
 Full-stack YouTube-style course project with:
 
 - `frontend/` - React + Vite client
-- `backend/` - FastAPI API
+- `backend/` - FastAPI API with **3-phase recommendation engine**
 - Supabase Auth for Google sign-in
 - Supabase/Postgres as the app database
+- **24,499+ video database** with BGE-M3 embeddings
 
 ## Agent Summary
 
@@ -32,7 +33,7 @@ FRONTEND_ENV_FILE: frontend/.env
 BACKEND_ENV_FILE: backend/.env
 FRONTEND_REQUIRED_ENV_KEYS: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_API_URL
 BACKEND_REQUIRED_ENV_KEYS: SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY, SUPABASE_JWT_SECRET, FRONTEND_URL
-KNOWN_LIMITATION: main browsing UI still uses mock/sample data, not fully live recommendation data
+KNOWN_LIMITATION: frontend still uses mock/sample data, backend recommendation API ready for integration
 ```
 
 ## Current Structure
@@ -102,10 +103,11 @@ It uses:
 The backend verifies Supabase JWTs and exposes app-level routes for:
 
 - profile read/update
-- preferences read/update
-- guest session create/get/delete
-- guest-to-user migration
+- guest session acknowledgement (POST)
 - logout/logout-all signaling
+- **personalized video feed generation (NEW!)**
+- **watch history tracking (NEW!)**
+- **3-phase recommendation engine (NEW!)**
 
 Health endpoint:
 
@@ -209,7 +211,7 @@ If you are exploring or modifying the project, start here:
 - `backend/app/config.py`
 - `backend/app/core/supabase.py`
 - `backend/app/api/routes/auth.py`
-- `backend/app/api/routes/guest.py`
+- `backend/app/api/routes/guest.py` (Updated with feed generation!)
 - `RUN_INSTRUCTIONS.md`
 
 ## Current State
@@ -220,12 +222,15 @@ What is real:
 - Supabase-based Google sign-in integration
 - FastAPI auth/session backend
 - guest session handling
+- **3-phase recommendation engine backend (NEW!)**
+- **24,499 video database with embeddings (NEW!)**
+- **personalized feed generation API (NEW!)**
 
 What is still partial:
 
-- recommendation backend is not fully connected to the live frontend feed
-- main pages still rely on local sample/mock data for browsing
+- main pages still rely on local sample/mock data for browsing (frontend integration pending)
 - some routes like settings are not fully implemented
+- video search functionality (future work)
 
 ## Known Gotchas
 

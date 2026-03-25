@@ -22,17 +22,6 @@ export const authService = {
     return response.json();
   },
 
-  async migrateGuestData(token, guestUuid) {
-    const response = await apiService.withAuth(token).post(API_ENDPOINTS.AUTH_MIGRATE_GUEST, {
-      guest_uuid: guestUuid,
-    });
-    if (!response.ok) {
-      const error = await response.json();
-      throw new Error(error.detail || 'Migration failed');
-    }
-    return response.json();
-  },
-
   async logout(token) {
     const response = await apiService.withAuth(token).post(API_ENDPOINTS.AUTH_LOGOUT, {});
     return response.json();

@@ -74,11 +74,11 @@ This document outlines the step-by-step implementation plan for adding authentic
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                          SUPABASE (BaaS)                                    │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    │
-│  │ Supabase     │  │  PostgreSQL  │  │   Row Level  │  │  Realtime    │    │
-│  │  Auth        │  │   + pgvector │  │   Security   │  │  (optional)  │    │
-│  │ (Google)     │  │   Database   │  │   (RLS)      │  │              │    │
-│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘    │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
+│  │ Supabase     │  │  PostgreSQL  │  │   Row Level  │  │  Realtime    │     │
+│  │  Auth        │  │   + pgvector │  │   Security   │  │  (optional)  │     │
+│  │ (Google)     │  │   Database   │  │   (RLS)      │  │              │     │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘     │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -124,7 +124,7 @@ This document outlines the step-by-step implementation plan for adding authentic
 4. Create **OAuth 2.0 Client ID** (Web Application)
 5. Add authorized redirect URIs:
    - `https://<project-ref>.supabase.co/auth/v1/callback`
-   - `http://localhost:5173` (for local dev - Supabase handles the redirect)
+   - `http://localhost:5173` (for **local** dev - Supabase handles the redirect)
 6. Copy **Client ID** and **Client Secret**
 
 **In Supabase Dashboard:**
@@ -1146,11 +1146,9 @@ async def logout_all_sessions(current_user: dict = Depends(get_current_user)):
 ```
 
 ### Expected Outcome
-- `/api/auth/profile` - Get/update user profile
-- `/api/auth/preferences` - Get/update user preferences
-- `/api/auth/migrate-guest` - Migrate guest data after signup
-- `/api/auth/logout` - Logout current session
-- `/api/auth/logout-all` - Logout all sessions (signals intent)
+- `/api/auth/profile` - Get/update user profile ✅
+- `/api/auth/logout` - Logout current session ✅
+- `/api/auth/logout-all` - Logout all sessions ✅
 
 ---
 
@@ -1393,14 +1391,9 @@ export function AuthProvider({ children }) {
           // Clear guest ID on sign in
           const previousGuestId = GuestManager.getGuestId();
 
-          // Migrate guest data if exists
+          // Clear guest data (managed via localStorage)
           if (GuestManager.hasGuestId()) {
-            try {
-              await migrateGuestData(previousGuestId, session.access_token);
-              GuestManager.clearGuestId();
-            } catch (error) {
-              console.error('Guest migration failed:', error);
-            }
+            GuestManager.clearGuestId();
           }
 
           setGuestId(null);
@@ -1430,7 +1423,9 @@ export function AuthProvider({ children }) {
     return response;
   }, [session]);
 
-  // Migrate guest data to user account
+  // Note: Guest data migration is no longer needed (guest data managed via localStorage)
+  // Keeping this for reference - not implemented in backend
+  /*
   const migrateGuestData = async (guestUuid, accessToken) => {
     const response = await fetch(`${API_BASE_URL}/api/auth/migrate-guest`, {
       method: 'POST',
@@ -1448,6 +1443,7 @@ export function AuthProvider({ children }) {
 
     return response.json();
   };
+  */
 
   // Sign in with Google
   const signInWithGoogle = async (options = {}) => {

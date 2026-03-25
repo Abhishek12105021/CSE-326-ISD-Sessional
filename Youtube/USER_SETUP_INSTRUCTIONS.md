@@ -204,14 +204,14 @@ Once authentication is working, you can:
 | `/health` | GET | No | Health check |
 | `/api/auth/profile` | GET | Yes | Get user profile |
 | `/api/auth/profile` | PUT | Yes | Update profile |
-| `/api/auth/preferences` | GET | Yes | Get preferences |
-| `/api/auth/preferences` | PUT | Yes | Update preferences |
-| `/api/auth/migrate-guest` | POST | Yes | Migrate guest data |
 | `/api/auth/logout` | POST | Yes | Logout current session |
 | `/api/auth/logout-all` | POST | Yes | Logout all sessions |
-| `/api/guest/session` | POST | No | Create guest session |
-| `/api/guest/session/{uuid}` | GET | No | Get guest session |
-| `/api/guest/session/{uuid}` | DELETE | No | Delete guest session |
+| `/api/guest/session` | POST | No | Acknowledge guest session |
+| `/api/feed` | GET | Yes | Get personalized feed |
+| `/api/guest/feed` | POST | No | Get guest feed |
+| `/api/trending` | GET | No | Get trending videos |
+| `/api/categories` | GET | No | Get video categories |
+| `/api/guest/watch` | POST | No | Track watch events |
 
 ---
 
