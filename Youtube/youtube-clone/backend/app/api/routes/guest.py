@@ -25,9 +25,6 @@ async def create_guest_session(request: GuestSessionRequest):
         interaction_count=0,
         created_at=datetime.utcnow()
     )
-    
-    
-    
 
 
 @router.get("/session/{guest_uuid}", response_model=GuestSessionResponse)
