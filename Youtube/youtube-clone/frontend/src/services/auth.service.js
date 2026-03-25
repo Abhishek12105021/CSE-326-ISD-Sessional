@@ -22,22 +22,6 @@ export const authService = {
     return response.json();
   },
 
-  async getPreferences(token) {
-    const response = await apiService.withAuth(token).get(API_ENDPOINTS.AUTH_PREFERENCES);
-    if (!response.ok) {
-      throw new Error('Failed to fetch preferences');
-    }
-    return response.json();
-  },
-
-  async updatePreferences(token, preferences) {
-    const response = await apiService.withAuth(token).put(API_ENDPOINTS.AUTH_PREFERENCES, preferences);
-    if (!response.ok) {
-      throw new Error('Failed to update preferences');
-    }
-    return response.json();
-  },
-
   async migrateGuestData(token, guestUuid) {
     const response = await apiService.withAuth(token).post(API_ENDPOINTS.AUTH_MIGRATE_GUEST, {
       guest_uuid: guestUuid,

@@ -2,9 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from datetime import datetime
 from app.schemas.auth import (
     UserProfile,
-    UserPreferences,
     UpdateProfileRequest,
-    UpdatePreferencesRequest,
     MigrateGuestRequest,
     MessageResponse
 )
@@ -66,54 +64,6 @@ async def update_profile(
         region=updated.get("region"),
         created_at=updated["created_at"]
     )
-
-
-@router.get("/preferences", response_model=UserPreferences)
-async def get_preferences(current_user: dict = Depends(get_current_user)):
-    """Get current user's preferences."""
-    supabase = get_supabase_admin()
-
-    result = supabase.table("user_preferences").select("*").eq(
-        "user_id", current_user["id"]
-    ).single().execute()
-
-    if not result.data:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Preferences not found"
-        )
-
-    return UserPreferences(**result.data)
-
-
-@router.put("/preferences", response_model=UserPreferences)
-async def update_preferences(
-    request: UpdatePreferencesRequest,
-    current_user: dict = Depends(get_current_user)
-):
-    """Update current user's preferences."""
-    supabase = get_supabase_admin()
-
-    update_data = {k: v for k, v in request.dict().items() if v is not None}
-    if not update_data:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No fields to update"
-        )
-
-    update_data["updated_at"] = datetime.utcnow().isoformat()
-
-    result = supabase.table("user_preferences").update(update_data).eq(
-        "user_id", current_user["id"]
-    ).execute()
-
-    if not result.data:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update preferences"
-        )
-
-    return UserPreferences(**result.data[0])
 
 
 @router.post("/migrate-guest", response_model=MessageResponse)

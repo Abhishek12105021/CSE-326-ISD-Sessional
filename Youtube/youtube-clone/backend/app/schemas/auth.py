@@ -13,27 +13,11 @@ class UserProfile(BaseModel):
     created_at: datetime
 
 
-class UserPreferences(BaseModel):
-    """User preferences."""
-    theme: str = "dark"
-    autoplay: bool = True
-    restricted_mode: bool = False
-    interaction_count: int = 0
-    recommendation_phase: str = "cold_start"
-
-
 class UpdateProfileRequest(BaseModel):
     """Request to update profile."""
     display_name: Optional[str] = None
     region: Optional[str] = None
     language: Optional[str] = None
-
-
-class UpdatePreferencesRequest(BaseModel):
-    """Request to update preferences."""
-    theme: Optional[str] = None
-    autoplay: Optional[bool] = None
-    restricted_mode: Optional[bool] = None
 
 
 class GuestSessionRequest(BaseModel):
