@@ -377,6 +377,93 @@ async def get_unique_categories() -> list[str]:
 # ======================== LIKES MANAGEMENT ========================
 
 
+async def increment_video_likes(video_id: str) -> bool:
+    """
+    Increment the like count for a video.
+
+    SQL equivalent:
+    UPDATE videos SET likes = likes + 1 WHERE id = {video_id}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # First get current like count
+            response = await client.get(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={
+                    "select": "likes",
+                    "id": f"eq.{video_id}"
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if not data:
+                print(f"[WARNING] Video {video_id} not found")
+                return False
+
+            current_likes = data[0].get("likes", 0) or 0
+            new_likes = current_likes + 1
+
+            # Update with new value
+            update_response = await client.patch(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={"id": f"eq.{video_id}"},
+                json={"likes": new_likes}
+            )
+
+            print(f"[DEBUG] increment_video_likes - Video: {video_id}, Old: {current_likes}, New: {new_likes}, Status: {update_response.status_code}")
+            return update_response.status_code in (200, 204)
+        except Exception as e:
+            print(f"[ERROR] increment_video_likes failed for {video_id}: {e}")
+            return False
+
+
+async def decrement_video_likes(video_id: str) -> bool:
+    """
+    Decrement the like count for a video (min 0).
+
+    SQL equivalent:
+    UPDATE videos SET likes = MAX(0, likes - 1) WHERE id = {video_id}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # First get current like count
+            response = await client.get(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={
+                    "select": "likes",
+                    "id": f"eq.{video_id}"
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if not data:
+                print(f"[WARNING] Video {video_id} not found")
+                return False
+
+            current_likes = data[0].get("likes", 0) or 0
+            new_likes = max(0, current_likes - 1)  # Don't go below 0
+
+            # Update with new value
+            update_response = await client.patch(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={"id": f"eq.{video_id}"},
+                json={"likes": new_likes}
+            )
+
+            print(f"[DEBUG] decrement_video_likes - Video: {video_id}, Old: {current_likes}, New: {new_likes}, Status: {update_response.status_code}")
+            return update_response.status_code in (200, 204)
+        except Exception as e:
+            print(f"[ERROR] decrement_video_likes failed for {video_id}: {e}")
+            return False
+
+
+
 async def get_user_liked_videos(user_id: str, limit: int = 100) -> list[dict]:
     """
     Fetch all videos liked by user.
@@ -413,7 +500,7 @@ async def get_user_liked_videos(user_id: str, limit: int = 100) -> list[dict]:
 
 async def add_like(user_id: str, video_id: str) -> bool:
     """
-    Add a like for a video.
+    Add a like for a video and increment video's like count.
 
     SQL equivalent:
     INSERT INTO liked_videos (user_id, video_id, liked_at)
@@ -436,7 +523,15 @@ async def add_like(user_id: str, video_id: str) -> bool:
             print(f"[DEBUG] add_like response body: {response.text}")
 
             # 201 = created, 409 = conflict (already liked), both are success
-            return response.status_code in (200, 201, 409)
+            if response.status_code in (200, 201, 409):
+                # Only increment if this is a new like (status 201), not a duplicate (409)
+                if response.status_code == 201:
+                    print(f"[DEBUG] New like created, incrementing video like count")
+                    await increment_video_likes(video_id)
+                elif response.status_code == 409:
+                    print(f"[DEBUG] Like already exists (conflict), skipping increment")
+                return True
+            return False
         except Exception as e:
             print(f"[ERROR] add_like exception: {e}")
             return False
@@ -444,7 +539,7 @@ async def add_like(user_id: str, video_id: str) -> bool:
 
 async def remove_like(user_id: str, video_id: str) -> bool:
     """
-    Remove a like for a video.
+    Remove a like for a video and decrement video's like count.
 
     SQL equivalent:
     DELETE FROM liked_videos
@@ -471,10 +566,16 @@ async def remove_like(user_id: str, video_id: str) -> bool:
                     data = response.json()
                     deleted_count = len(data) if isinstance(data, list) else 1
                     print(f"[DEBUG] Deleted {deleted_count} rows")
+                    # Only decrement if a like was actually deleted
+                    if deleted_count > 0:
+                        await decrement_video_likes(video_id)
                     return deleted_count > 0
                 except:
-                    return True  # 200 OK means deletion was processed
-            # 204 No Content also indicates success
+                    # If we can't parse response but got 200, assume success and decrement
+                    await decrement_video_likes(video_id)
+                    return True
+            # 204 No Content also indicates success, but we don't know if a row was deleted
+            # To be safe, we'll decrement only if we have confirmation
             return True
 
         print(f"[ERROR] Delete failed with status {response.status_code}")
