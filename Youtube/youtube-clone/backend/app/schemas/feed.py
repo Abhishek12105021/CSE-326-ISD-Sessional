@@ -42,6 +42,7 @@ class WatchEventRequest(BaseModel):
     video_uuid: str  # UUID from videos.id
     watch_id: Optional[str] = None  # present only on UPDATE call
     watch_duration_seconds: Optional[int] = None  # from YouTube iframe API, only on UPDATE
+    video_duration_seconds: Optional[int] = None  # total video length (for watch percentage)
     guest_uuid: Optional[str] = None  # for guests
 
 
@@ -52,6 +53,36 @@ class WatchEventResponse(BaseModel):
 
 class CategoriesResponse(BaseModel):
     categories: list[str]
+
+
+# ======================== VIDEO METADATA ========================
+
+class VideoMetadataRequest(BaseModel):
+    """Request to get complete video metadata by UUID"""
+    video_uuid: str  # UUID from videos.id
+    
+class VideoMetadataResponse(BaseModel):
+    """Complete video metadata response with all available information"""
+    id: str  # UUID from videos.id
+    video_id: str  # YouTube ID
+    title: str
+    description: str
+    thumbnail: str
+    channel: ChannelInfo
+    views: str  # Formatted (e.g., "1.2M views")
+    views_raw: int  # Raw number
+    likes: int
+    dislikes: int
+    timestamp: str  # Formatted (e.g., "2 days ago")
+    publish_time_raw: str  # ISO timestamp
+    duration: str
+    category: str
+    velocity_score: Optional[float] = None
+    region: str
+    tags: list[str] = []
+    has_embedding: bool
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
 
 
 # ======================== LIKES ========================

@@ -170,7 +170,8 @@ async def record_guest_watch(request: WatchEventRequest):
     else:
         await update_watch_history(
             watch_id=request.watch_id,
-            watch_duration_seconds=request.watch_duration_seconds or 0
+            watch_duration_seconds=request.watch_duration_seconds or 0,
+            video_duration_seconds=request.video_duration_seconds
         )
         return WatchEventResponse(watch_id=request.watch_id, success=True)
 

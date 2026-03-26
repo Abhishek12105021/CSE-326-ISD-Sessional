@@ -6,7 +6,8 @@ from app.schemas.feed import (
     FeedResponse, VideoResponse, ChannelInfo, CategoriesResponse,
     LikeVideoRequest, LikeResponse, LikesListResponse,
     DislikeVideoRequest, DislikeResponse, DislikesListResponse,
-    SubscribeRequest, SubscriptionResponse, SubscribedChannelsResponse, AllChannelsResponse
+    SubscribeRequest, SubscriptionResponse, SubscribedChannelsResponse, AllChannelsResponse,
+    WatchEventRequest, WatchEventResponse, VideoMetadataRequest, VideoMetadataResponse
 )
 from app.core.recommendation import (
     build_taste_vector_from_uuids,
@@ -15,10 +16,11 @@ from app.core.recommendation import (
     generate_phase3_feed
 )
 from app.db import (
-    get_watch_history, get_unique_categories,
+    get_watch_history, get_unique_categories, get_videos_by_uuids,
     get_user_liked_videos, add_like, remove_like, is_video_liked,
     get_user_disliked_videos, add_dislike, remove_dislike, is_video_disliked,
-    get_all_channels, get_user_subscribed_channels, subscribe, unsubscribe, is_subscribed
+    get_all_channels, get_user_subscribed_channels, subscribe, unsubscribe, is_subscribed,
+    insert_watch_history, update_watch_history
 )
 from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
 
@@ -704,5 +706,248 @@ async def get_all_available_channels():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch channels"
+        )
+
+
+# ======================== VIDEO METADATA ENDPOINT ========================
+
+@router.post("/get", response_model=VideoMetadataResponse)
+async def get_video_metadata(request: VideoMetadataRequest):
+    """
+    Get complete video metadata by UUID.
+
+    Returns all available video information including:
+    - Basic video details (title, thumbnail, duration)
+    - Channel information (name, avatar, verification status)
+    - Engagement metrics (views, likes, velocity score)
+    - Content metadata (category, publish time, description)
+    - Technical details (video_id, embeddings availability)
+
+    Args:
+        request: VideoMetadataRequest containing video_uuid
+
+    Returns:
+        VideoMetadataResponse with complete video information
+    """
+    video_uuid = request.video_uuid
+
+    print(f"[DEBUG] get_video_metadata - video_uuid: {video_uuid}")
+
+    try:
+        # Fetch video data by UUID
+        videos = await get_videos_by_uuids([video_uuid])
+
+        if not videos or len(videos) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Video with UUID {video_uuid} not found"
+            )
+
+        video_data = videos[0]
+
+        # Parse tags from pipe-separated string to list
+        tags_str = video_data.get("tags", "")
+        tags_list = [tag.strip() for tag in tags_str.split("|") if tag.strip()] if isinstance(tags_str, str) else []
+
+        # Transform to complete metadata response
+        metadata = VideoMetadataResponse(
+            id=video_data["id"],
+            video_id=video_data["video_id"],
+            title=video_data["title"],
+            description=video_data.get("description", ""),
+            thumbnail=video_data["thumbnail_link"],
+            channel=ChannelInfo(
+                name=video_data["channel_title"],
+                avatar=generate_channel_avatar(video_data["channel_title"]),
+                verified=is_verified(video_data.get("views", 0), video_data.get("likes", 0)),
+                id=video_data["channel_title"]
+            ),
+            views=format_views(video_data.get("views", 0)),
+            views_raw=video_data.get("views", 0),
+            likes=video_data.get("likes", 0),
+            dislikes=video_data.get("dislikes", 0),
+            timestamp=format_timestamp(video_data.get("publish_time", "")),
+            publish_time_raw=video_data.get("publish_time", ""),
+            duration="10:00",  # Placeholder - would be calculated from video_duration_seconds
+            category=video_data.get("category_name", "Unknown"),
+            velocity_score=video_data.get("velocity_score"),
+            region=video_data.get("region", "Unknown"),
+            tags=tags_list,
+            has_embedding=bool(video_data.get("embedding")),
+            created_at=video_data.get("created_at"),
+            updated_at=video_data.get("updated_at")
+        )
+
+        print(f"[DEBUG] Successfully retrieved metadata for video {video_uuid}")
+
+        return metadata
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] get_video_metadata failed - video_uuid: {video_uuid}, error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve video metadata: {str(e)}"
+        )
+
+
+# ======================== WATCH TRACKING ENDPOINT ========================
+
+
+@router.post("/watch", response_model=WatchEventResponse)
+async def track_watch_event(
+    request: WatchEventRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Track watch events for authenticated users.
+
+    Two-phase tracking system:
+    1. INSERT (video start): Creates watch record with duration=0
+    2. UPDATE (video end): Updates with actual watch duration
+
+    Flow:
+    - User clicks video → Frontend calls POST /watch with video_uuid
+    - Backend INSERTs watch_history row, returns watch_id
+    - User leaves/navigates → Frontend calls POST /watch with watch_id + duration
+    - Backend UPDATEs the watch_history row with actual duration
+
+    Args:
+        request: WatchEventRequest containing video_uuid and optional watch_id/duration
+        current_user: Authenticated user from JWT
+
+    Returns:
+        WatchEventResponse with watch_id (INSERT) or success status (UPDATE)
+    """
+    user_id = current_user["id"]
+    video_uuid = request.video_uuid
+
+    print(f"[DEBUG] track_watch_event - user_id: {user_id}, video_uuid: {video_uuid}")
+
+    try:
+        # MODE 1: INSERT (video start) - no watch_id provided
+        if not request.watch_id:
+            print(f"[DEBUG] INSERT mode - creating new watch record")
+
+            watch_id = await insert_watch_history(
+                user_id=user_id,  # Authenticated user
+                guest_uuid=None,  # Not a guest
+                video_uuid=video_uuid
+            )
+
+            print(f"[DEBUG] Created watch record with ID: {watch_id}")
+
+            return WatchEventResponse(
+                watch_id=watch_id,
+                success=True
+            )
+
+        # MODE 2: UPDATE (video end) - watch_id provided with duration
+        else:
+            print(f"[DEBUG] UPDATE mode - updating watch record {request.watch_id} with duration {request.watch_duration_seconds}")
+
+            success = await update_watch_history(
+                watch_id=request.watch_id,
+                watch_duration_seconds=request.watch_duration_seconds or 0,
+                video_duration_seconds=request.video_duration_seconds
+            )
+
+            if not success:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to update watch duration"
+                )
+
+            print(f"[DEBUG] Successfully updated watch record")
+
+            return WatchEventResponse(
+                watch_id=request.watch_id,
+                success=True
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] track_watch_event failed - user_id: {user_id}, video_uuid: {video_uuid}, error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to track watch event: {str(e)}"
+        )
+
+
+@router.get("/watch-history")
+async def get_user_watch_history(
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get authenticated user's complete watch history.
+
+    Features:
+    - Returns watch history in reverse chronological order (newest first)
+    - Includes video metadata, watch duration, and timestamps
+    - Pageable with configurable limit (1-500)
+    - Shows watch percentage and completion status
+
+    Args:
+        limit: Number of watch history entries to return (default 100, max 500)
+        current_user: Authenticated user from JWT
+
+    Returns:
+        List of watch history entries with video details and watch metadata
+    """
+    user_id = current_user["id"]
+
+    try:
+        # Fetch user's watch history
+        history_rows = await get_watch_history(user_id, limit=limit)
+
+        # Get video UUIDs from history
+        video_uuids = [row["video_id"] for row in history_rows]
+
+        if not video_uuids:
+            return {
+                "watch_history": [],
+                "total": 0
+            }
+
+        # Fetch full video data for the watched videos
+        videos = await get_videos_by_uuids(video_uuids)
+
+        # Create a mapping from video UUID to video data
+        video_map = {v["id"]: v for v in videos}
+
+        # Combine watch history with video metadata
+        watch_history = []
+        for history_row in history_rows:
+            video_uuid = history_row["video_id"]
+            video_data = video_map.get(video_uuid)
+
+            if video_data:
+                # Transform video data
+                video_response = transform_video(video_data)
+
+                # Add watch metadata
+                watch_entry = {
+                    "watch_id": history_row["id"],
+                    "video": video_response,
+                    "watch_duration_seconds": history_row.get("watch_duration_seconds", 0),
+                    "watch_percentage": float(history_row.get("watch_percentage", 0)) if history_row.get("watch_percentage") else 0.0,
+                    "started_at": history_row.get("started_at"),
+                    "ended_at": history_row.get("ended_at"),
+                    "completed": history_row.get("watch_percentage", 0) >= 80 if history_row.get("watch_percentage") else False
+                }
+                watch_history.append(watch_entry)
+
+        return {
+            "watch_history": watch_history,
+            "total": len(watch_history)
+        }
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch watch history for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch watch history"
         )
 

@@ -322,22 +322,38 @@ async def insert_watch_history(
     async with httpx.AsyncClient(timeout=30.0) as client:
         payload = {
             "user_id": user_id,
-            "guest_uuid": guest_uuid,
             "video_id": video_uuid,  # references videos.id
-            "watch_duration_seconds": 0
+            "watch_duration_seconds": 0,
+            "started_at": datetime.utcnow().isoformat()
         }
-        response = await client.post(
-            f"{REST_URL}/watch_history",
-            headers={**HEADERS, "Prefer": "return=representation"},
-            json=payload
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data[0]["id"]
+        try:
+            response = await client.post(
+                f"{REST_URL}/watch_history",
+                headers={**HEADERS, "Prefer": "return=representation"},
+                json=payload
+            )
+            response.raise_for_status()
+            data = response.json()
+            return data[0]["id"]
+        except Exception as e:
+            print(f"[ERROR] insert_watch_history failed - payload: {payload}")
+            print(f"[ERROR] Response status: {response.status_code if 'response' in locals() else 'N/A'}")
+            print(f"[ERROR] Response text: {response.text if 'response' in locals() else 'N/A'}")
+            raise
 
 
-async def update_watch_history(watch_id: str, watch_duration_seconds: int) -> bool:
-    """UPDATE watch_history with actual duration"""
+async def update_watch_history(watch_id: str, watch_duration_seconds: int, video_duration_seconds: Optional[int] = None) -> bool:
+    """
+    UPDATE watch_history with actual duration and calculate watch percentage.
+
+    Args:
+        watch_id: The watch record ID to update
+        watch_duration_seconds: How long the user actually watched
+        video_duration_seconds: Total video length (for percentage calculation)
+
+    Returns:
+        True if successful, False otherwise
+    """
     from datetime import datetime
 
     async with httpx.AsyncClient(timeout=30.0) as client:
@@ -345,14 +361,26 @@ async def update_watch_history(watch_id: str, watch_duration_seconds: int) -> bo
             "watch_duration_seconds": watch_duration_seconds,
             "ended_at": datetime.utcnow().isoformat()
         }
-        response = await client.patch(
-            f"{REST_URL}/watch_history",
-            headers=HEADERS,
-            params={"id": f"eq.{watch_id}"},
-            json=payload
-        )
-        response.raise_for_status()
-        return True
+
+        # Calculate watch percentage if video duration is provided
+        if video_duration_seconds and video_duration_seconds > 0:
+            watch_percentage = min(100.0, (watch_duration_seconds / video_duration_seconds) * 100)
+            payload["watch_percentage"] = round(watch_percentage, 2)
+
+        try:
+            response = await client.patch(
+                f"{REST_URL}/watch_history",
+                headers=HEADERS,
+                params={"id": f"eq.{watch_id}"},
+                json=payload
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            print(f"[ERROR] update_watch_history failed - watch_id: {watch_id}, payload: {payload}")
+            print(f"[ERROR] Response status: {response.status_code if 'response' in locals() else 'N/A'}")
+            print(f"[ERROR] Response text: {response.text if 'response' in locals() else 'N/A'}")
+            raise
 
 
 async def get_unique_categories() -> list[str]:
