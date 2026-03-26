@@ -859,3 +859,154 @@ async def is_video_disliked(user_id: str, video_id: str) -> bool:
             return len(data) > 0
         return False
 
+
+# ======================== SUBSCRIPTIONS MANAGEMENT ========================
+
+
+async def get_all_channels() -> list[str]:
+    """
+    Fetch all unique channel titles from videos table.
+
+    SQL equivalent:
+    SELECT DISTINCT channel_title FROM videos
+    ORDER BY channel_title
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{REST_URL}/videos",
+            headers=HEADERS,
+            params={"select": "channel_title", "limit": 5000}
+        )
+        response.raise_for_status()
+        rows = response.json()
+        return sorted(set(row["channel_title"] for row in rows if row.get("channel_title")))
+
+
+async def get_user_subscribed_channels(user_id: str, limit: int = 100) -> list[str]:
+    """
+    Fetch all channels subscribed by user.
+
+    SQL equivalent:
+    SELECT DISTINCT channel_id FROM subscriptions
+    WHERE user_id = {user_id}
+    ORDER BY created_at DESC
+    LIMIT {limit}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{REST_URL}/subscriptions",
+            headers=HEADERS,
+            params={
+                "select": "channel_id",
+                "user_id": f"eq.{user_id}",
+                "order": "created_at.desc",
+                "limit": limit
+            }
+        )
+        response.raise_for_status()
+        subscriptions = response.json()
+
+        if not subscriptions:
+            return []
+
+        # Return list of unique channel IDs
+        return [sub["channel_id"] for sub in subscriptions]
+
+
+async def subscribe(user_id: str, channel_id: str) -> bool:
+    """
+    Subscribe user to a channel.
+
+    SQL equivalent:
+    INSERT INTO subscriptions (user_id, channel_id, created_at)
+    VALUES ({user_id}, {channel_id}, NOW())
+    ON CONFLICT DO NOTHING
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        payload = {
+            "user_id": user_id,
+            "channel_id": channel_id
+        }
+        try:
+            response = await client.post(
+                f"{REST_URL}/subscriptions",
+                headers={**HEADERS, "Prefer": "resolution=ignore-duplicates"},
+                json=payload
+            )
+
+            print(f"[DEBUG] subscribe response status: {response.status_code}")
+            print(f"[DEBUG] subscribe response body: {response.text}")
+
+            # 201 = created, 409 = conflict (already subscribed), both are success
+            return response.status_code in (200, 201, 409)
+        except Exception as e:
+            print(f"[ERROR] subscribe exception: {e}")
+            return False
+
+
+async def unsubscribe(user_id: str, channel_id: str) -> bool:
+    """
+    Unsubscribe user from a channel.
+
+    SQL equivalent:
+    DELETE FROM subscriptions
+    WHERE user_id = {user_id} AND channel_id = {channel_id}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.delete(
+            f"{REST_URL}/subscriptions",
+            headers={**HEADERS, "Prefer": "return=representation"},
+            params={
+                "user_id": f"eq.{user_id}",
+                "channel_id": f"eq.{channel_id}"
+            }
+        )
+
+        print(f"[DEBUG] unsubscribe response status: {response.status_code}")
+        print(f"[DEBUG] unsubscribe response body: {response.text}")
+
+        # Check if response indicates deletion occurred
+        if response.status_code in (200, 204):
+            # For status 200, check if any rows were deleted
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    deleted_count = len(data) if isinstance(data, list) else 1
+                    print(f"[DEBUG] Deleted {deleted_count} subscription rows")
+                    return deleted_count > 0
+                except:
+                    return True  # 200 OK means deletion was processed
+            # 204 No Content also indicates success
+            return True
+
+        print(f"[ERROR] Unsubscribe failed with status {response.status_code}")
+        return False
+
+
+async def is_subscribed(user_id: str, channel_id: str) -> bool:
+    """
+    Check if user is subscribed to a channel.
+
+    SQL equivalent:
+    SELECT EXISTS(
+        SELECT 1 FROM subscriptions
+        WHERE user_id = {user_id} AND channel_id = {channel_id}
+    )
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{REST_URL}/subscriptions",
+            headers=HEADERS,
+            params={
+                "user_id": f"eq.{user_id}",
+                "channel_id": f"eq.{channel_id}",
+                "select": "id"
+            }
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            return len(data) > 0
+        return False
+
+

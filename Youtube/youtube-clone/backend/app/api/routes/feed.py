@@ -5,7 +5,8 @@ from app.db import get_user_by_id
 from app.schemas.feed import (
     FeedResponse, VideoResponse, ChannelInfo, CategoriesResponse,
     LikeVideoRequest, LikeResponse, LikesListResponse,
-    DislikeVideoRequest, DislikeResponse, DislikesListResponse
+    DislikeVideoRequest, DislikeResponse, DislikesListResponse,
+    SubscribeRequest, SubscriptionResponse, SubscribedChannelsResponse, AllChannelsResponse
 )
 from app.core.recommendation import (
     build_taste_vector_from_uuids,
@@ -16,7 +17,8 @@ from app.core.recommendation import (
 from app.db import (
     get_watch_history, get_unique_categories,
     get_user_liked_videos, add_like, remove_like, is_video_liked,
-    get_user_disliked_videos, add_dislike, remove_dislike, is_video_disliked
+    get_user_disliked_videos, add_dislike, remove_dislike, is_video_disliked,
+    get_all_channels, get_user_subscribed_channels, subscribe, unsubscribe, is_subscribed
 )
 from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
 
@@ -532,3 +534,175 @@ async def remove_dislike_video(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to remove dislike: {str(e)}"
         )
+
+# -------------------------------------------------------subscriptions endpoints -------------------------------------------------------
+@router.get("/subscriptions", response_model=SubscribedChannelsResponse)
+async def get_subscriptions(
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get all channels subscribed by authenticated user.
+
+    Args:
+        limit: Maximum number of subscribed channels to return (default 100, max 500)
+        current_user: Authenticated user from JWT
+
+    Returns:
+        SubscribedChannelsResponse with list of channel names and total count
+    """
+    user_id = current_user["id"]
+
+    try:
+        # Fetch user's subscribed channels
+        channels = await get_user_subscribed_channels(user_id, limit)
+
+        return SubscribedChannelsResponse(
+            channels=channels,
+            total=len(channels)
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch subscriptions for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch subscriptions"
+        )
+
+
+@router.post("/subscribe", response_model=SubscriptionResponse)
+async def subscribe_channel(
+    request: SubscribeRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Subscribe to a channel.
+
+    Features:
+    - Idempotent: Subscribing to same channel twice is safe (no duplicate)
+    - Returns current subscription state after action
+    - Validates user authentication
+
+    Args:
+        request: Contains channel_name to subscribe to
+        current_user: Authenticated user from JWT
+
+    Returns:
+        SubscriptionResponse with success status and current subscription state
+    """
+    user_id = current_user["id"]
+    channel_name = request.channel_name
+
+    print(f"[DEBUG] subscribe_channel called - user_id: {user_id}, channel_name: {channel_name}")
+
+    try:
+        # Subscribe to channel
+        success = await subscribe(user_id, channel_name)
+
+        print(f"[DEBUG] subscribe result: {success}")
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to subscribe - check backend logs for details"
+            )
+
+        # Return current state
+        is_sub = await is_subscribed(user_id, channel_name)
+
+        print(f"[DEBUG] is_subscribed result: {is_sub}")
+
+        return SubscriptionResponse(
+            success=True,
+            message="Subscribed successfully",
+            is_subscribed=is_sub
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] subscribe_channel exception - user_id: {user_id}, channel_name: {channel_name}, error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to subscribe: {str(e)}"
+        )
+
+
+@router.delete("/subscribe", response_model=SubscriptionResponse)
+async def unsubscribe_channel(
+    request: SubscribeRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Unsubscribe from a channel.
+
+    Features:
+    - Idempotent: Unsubscribing from non-subscribed channel is safe
+    - Removes subscription immediately
+    - Returns updated subscription state
+
+    Args:
+        request: Contains channel_name to unsubscribe from
+        current_user: Authenticated user from JWT
+
+    Returns:
+        SubscriptionResponse with success status and current subscription state (should be false)
+    """
+    user_id = current_user["id"]
+    channel_name = request.channel_name
+
+    print(f"[DEBUG] unsubscribe_channel called - user_id: {user_id}, channel_name: {channel_name}")
+
+    try:
+        # Unsubscribe from channel
+        success = await unsubscribe(user_id, channel_name)
+
+        print(f"[DEBUG] unsubscribe result: {success}")
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to unsubscribe"
+            )
+
+        # Verify subscription was removed
+        is_sub = await is_subscribed(user_id, channel_name)
+
+        print(f"[DEBUG] is_subscribed after unsubscribe: {is_sub}")
+
+        return SubscriptionResponse(
+            success=True,
+            message="Unsubscribed successfully",
+            is_subscribed=is_sub
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] Failed to unsubscribe from channel {channel_name} for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to unsubscribe: {str(e)}"
+        )
+
+
+@router.get("/channels", response_model=AllChannelsResponse)
+async def get_all_available_channels():
+    """
+    Get all available channels from videos table.
+
+    Returns:
+        AllChannelsResponse with list of all unique channel names and total count
+    """
+    try:
+        # Fetch all unique channels
+        channels = await get_all_channels()
+
+        return AllChannelsResponse(
+            channels=channels,
+            total=len(channels)
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch all channels: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch channels"
+        )
+

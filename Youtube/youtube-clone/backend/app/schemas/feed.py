@@ -94,3 +94,31 @@ class DislikesListResponse(BaseModel):
     """Response containing user's disliked videos"""
     videos: list[VideoResponse]
     total: int
+
+
+# ======================== SUBSCRIPTIONS ========================
+
+
+class SubscribeRequest(BaseModel):
+    """Request to subscribe/unsubscribe from a channel"""
+    channel_name: str  # Channel title from videos.channel_title
+
+
+class SubscriptionResponse(BaseModel):
+    """Response after subscribe/unsubscribe action"""
+    success: bool
+    message: str
+    is_subscribed: bool  # current subscription state after action
+
+
+class SubscribedChannelsResponse(BaseModel):
+    """Response containing user's subscribed channels"""
+    channels: list[str]
+    total: int
+
+
+class AllChannelsResponse(BaseModel):
+    """Response containing all available channels"""
+    channels: list[str]
+    total: int
+
