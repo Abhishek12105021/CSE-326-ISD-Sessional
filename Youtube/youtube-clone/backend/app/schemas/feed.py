@@ -73,3 +73,24 @@ class LikesListResponse(BaseModel):
     """Response containing user's liked videos"""
     videos: list[VideoResponse]
     total: int
+
+
+# ======================== DISLIKES ========================
+
+
+class DislikeVideoRequest(BaseModel):
+    """Request to dislike/remove dislike from a video"""
+    video_uuid: str  # UUID from videos.id
+
+
+class DislikeResponse(BaseModel):
+    """Response after dislike/remove dislike action"""
+    success: bool
+    message: str
+    is_disliked: bool  # current state after action
+
+
+class DislikesListResponse(BaseModel):
+    """Response containing user's disliked videos"""
+    videos: list[VideoResponse]
+    total: int

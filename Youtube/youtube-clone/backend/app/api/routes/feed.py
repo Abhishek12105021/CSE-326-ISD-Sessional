@@ -4,7 +4,8 @@ from app.api.deps import get_current_user
 from app.db import get_user_by_id
 from app.schemas.feed import (
     FeedResponse, VideoResponse, ChannelInfo, CategoriesResponse,
-    LikeVideoRequest, LikeResponse, LikesListResponse
+    LikeVideoRequest, LikeResponse, LikesListResponse,
+    DislikeVideoRequest, DislikeResponse, DislikesListResponse
 )
 from app.core.recommendation import (
     build_taste_vector_from_uuids,
@@ -14,7 +15,8 @@ from app.core.recommendation import (
 )
 from app.db import (
     get_watch_history, get_unique_categories,
-    get_user_liked_videos, add_like, remove_like, is_video_liked
+    get_user_liked_videos, add_like, remove_like, is_video_liked,
+    get_user_disliked_videos, add_dislike, remove_dislike, is_video_disliked
 )
 from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
 
@@ -376,4 +378,157 @@ async def unlike_video(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to unlike video: {str(e)}"
+        )
+
+
+@router.get("/dislikes", response_model=DislikesListResponse)
+async def get_disliked_videos(
+    limit: int = Query(default=50, ge=1, le=500),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Get all videos disliked by authenticated user.
+
+    Args:
+        limit: Maximum number of disliked videos to return (default 50, max 500)
+        current_user: Authenticated user from JWT
+
+    Returns:
+        DislikesListResponse with list of disliked videos and total count
+    """
+    user_id = current_user["id"]
+
+    try:
+        # Fetch user's disliked videos
+        videos = await get_user_disliked_videos(user_id, limit)
+
+        if not videos:
+            return DislikesListResponse(videos=[], total=0)
+
+        # Transform to VideoResponse format
+        video_responses = [transform_video(video) for video in videos]
+
+        return DislikesListResponse(
+            videos=video_responses,
+            total=len(video_responses)
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch disliked videos for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch disliked videos"
+        )
+
+
+@router.post("/dislike", response_model=DislikeResponse)
+async def dislike_video(
+    request: DislikeVideoRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Dislike a video (add to user's disliked collection).
+
+    Features:
+    - Idempotent: Disliking the same video twice is safe (no duplicate)
+    - Returns current dislike state after action
+    - Validates user authentication
+
+    Args:
+        request: Contains video_uuid to dislike
+        current_user: Authenticated user from JWT
+
+    Returns:
+        DislikeResponse with success status and current dislike state
+    """
+    user_id = current_user["id"]
+    video_id = request.video_uuid
+
+    print(f"[DEBUG] dislike_video called - user_id: {user_id}, video_id: {video_id}")
+
+    try:
+        # Add dislike (safe if already disliked)
+        success = await add_dislike(user_id, video_id)
+
+        print(f"[DEBUG] add_dislike result: {success}")
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to add dislike - check backend logs for details"
+            )
+
+        # Return current state
+        is_disliked = await is_video_disliked(user_id, video_id)
+
+        print(f"[DEBUG] is_video_disliked result: {is_disliked}")
+
+        return DislikeResponse(
+            success=True,
+            message="Video disliked successfully",
+            is_disliked=is_disliked
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] dislike_video exception - user_id: {user_id}, video_id: {video_id}, error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to dislike video: {str(e)}"
+        )
+
+
+@router.delete("/dislike", response_model=DislikeResponse)
+async def remove_dislike_video(
+    request: DislikeVideoRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Remove dislike from a video (remove from user's disliked collection).
+
+    Features:
+    - Idempotent: Removing dislike from a non-disliked video is safe
+    - Removes dislike immediately
+    - Returns updated dislike state
+
+    Args:
+        request: Contains video_uuid to remove dislike from
+        current_user: Authenticated user from JWT
+
+    Returns:
+        DislikeResponse with success status and current dislike state (should be false)
+    """
+    user_id = current_user["id"]
+    video_id = request.video_uuid
+
+    print(f"[DEBUG] remove_dislike_video called - user_id: {user_id}, video_id: {video_id}")
+
+    try:
+        # Remove dislike (safe if not already disliked)
+        success = await remove_dislike(user_id, video_id)
+
+        print(f"[DEBUG] remove_dislike result: {success}")
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to remove dislike"
+            )
+
+        # Verify dislike was removed
+        is_disliked = await is_video_disliked(user_id, video_id)
+
+        print(f"[DEBUG] is_video_disliked after removal: {is_disliked}")
+
+        return DislikeResponse(
+            success=True,
+            message="Video dislike removed successfully",
+            is_disliked=is_disliked
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] Failed to remove dislike for video {video_id} and user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to remove dislike: {str(e)}"
         )

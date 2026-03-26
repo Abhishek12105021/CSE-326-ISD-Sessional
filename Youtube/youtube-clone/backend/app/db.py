@@ -463,6 +463,93 @@ async def decrement_video_likes(video_id: str) -> bool:
             return False
 
 
+async def increment_video_dislikes(video_id: str) -> bool:
+    """
+    Increment the dislike count for a video.
+
+    SQL equivalent:
+    UPDATE videos SET dislikes = dislikes + 1 WHERE id = {video_id}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # First get current dislike count
+            response = await client.get(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={
+                    "select": "dislikes",
+                    "id": f"eq.{video_id}"
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if not data:
+                print(f"[WARNING] Video {video_id} not found")
+                return False
+
+            current_dislikes = data[0].get("dislikes", 0) or 0
+            new_dislikes = current_dislikes + 1
+
+            # Update with new value
+            update_response = await client.patch(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={"id": f"eq.{video_id}"},
+                json={"dislikes": new_dislikes}
+            )
+
+            print(f"[DEBUG] increment_video_dislikes - Video: {video_id}, Old: {current_dislikes}, New: {new_dislikes}, Status: {update_response.status_code}")
+            return update_response.status_code in (200, 204)
+        except Exception as e:
+            print(f"[ERROR] increment_video_dislikes failed for {video_id}: {e}")
+            return False
+
+
+async def decrement_video_dislikes(video_id: str) -> bool:
+    """
+    Decrement the dislike count for a video (min 0).
+
+    SQL equivalent:
+    UPDATE videos SET dislikes = MAX(0, dislikes - 1) WHERE id = {video_id}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # First get current dislike count
+            response = await client.get(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={
+                    "select": "dislikes",
+                    "id": f"eq.{video_id}"
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if not data:
+                print(f"[WARNING] Video {video_id} not found")
+                return False
+
+            current_dislikes = data[0].get("dislikes", 0) or 0
+            new_dislikes = max(0, current_dislikes - 1)  # Don't go below 0
+
+            # Update with new value
+            update_response = await client.patch(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={"id": f"eq.{video_id}"},
+                json={"dislikes": new_dislikes}
+            )
+
+            print(f"[DEBUG] decrement_video_dislikes - Video: {video_id}, Old: {current_dislikes}, New: {new_dislikes}, Status: {update_response.status_code}")
+            return update_response.status_code in (200, 204)
+        except Exception as e:
+            print(f"[ERROR] decrement_video_dislikes failed for {video_id}: {e}")
+            return False
+
+
+
 
 async def get_user_liked_videos(user_id: str, limit: int = 100) -> list[dict]:
     """
@@ -501,6 +588,7 @@ async def get_user_liked_videos(user_id: str, limit: int = 100) -> list[dict]:
 async def add_like(user_id: str, video_id: str) -> bool:
     """
     Add a like for a video and increment video's like count.
+    If video was previously disliked, remove the dislike first.
 
     SQL equivalent:
     INSERT INTO liked_videos (user_id, video_id, liked_at)
@@ -508,6 +596,13 @@ async def add_like(user_id: str, video_id: str) -> bool:
     ON CONFLICT DO NOTHING
     """
     async with httpx.AsyncClient(timeout=30.0) as client:
+        # Check if video was disliked
+        is_disliked = await is_video_disliked(user_id, video_id)
+
+        if is_disliked:
+            print(f"[DEBUG] Video was disliked, removing dislike first")
+            await remove_dislike(user_id, video_id)
+
         payload = {
             "user_id": user_id,
             "video_id": video_id
@@ -607,3 +702,160 @@ async def is_video_liked(user_id: str, video_id: str) -> bool:
             data = response.json()
             return len(data) > 0
         return False
+
+
+# ======================== DISLIKES MANAGEMENT ========================
+
+
+async def get_user_disliked_videos(user_id: str, limit: int = 100) -> list[dict]:
+    """
+    Fetch all videos disliked by user.
+
+    SQL equivalent:
+    SELECT v.* FROM videos v
+    JOIN disliked_videos dv ON v.id = dv.video_id
+    WHERE dv.user_id = {user_id}
+    ORDER BY dv.disliked_at DESC
+    LIMIT {limit}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # First get disliked video IDs from disliked_videos
+        response = await client.get(
+            f"{REST_URL}/disliked_videos",
+            headers=HEADERS,
+            params={
+                "select": "video_id",
+                "user_id": f"eq.{user_id}",
+                "order": "disliked_at.desc",
+                "limit": limit
+            }
+        )
+        response.raise_for_status()
+        dislikes = response.json()
+
+        if not dislikes:
+            return []
+
+        # Extract video IDs and fetch full video data
+        video_ids = [dislike["video_id"] for dislike in dislikes]
+        return await get_videos_by_uuids(video_ids)
+
+
+async def add_dislike(user_id: str, video_id: str) -> bool:
+    """
+    Add a dislike for a video and increment video's dislike count.
+    If video was previously liked, remove the like first.
+
+    SQL equivalent:
+    INSERT INTO disliked_videos (user_id, video_id, disliked_at)
+    VALUES ({user_id}, {video_id}, NOW())
+    ON CONFLICT DO NOTHING
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Check if video was liked
+        is_liked = await is_video_liked(user_id, video_id)
+
+        if is_liked:
+            print(f"[DEBUG] Video was liked, removing like first")
+            await remove_like(user_id, video_id)
+
+        payload = {
+            "user_id": user_id,
+            "video_id": video_id
+        }
+        try:
+            response = await client.post(
+                f"{REST_URL}/disliked_videos",
+                headers={**HEADERS, "Prefer": "resolution=ignore-duplicates"},
+                json=payload
+            )
+
+            print(f"[DEBUG] add_dislike response status: {response.status_code}")
+            print(f"[DEBUG] add_dislike response body: {response.text}")
+
+            # 201 = created, 409 = conflict (already disliked), both are success
+            if response.status_code in (200, 201, 409):
+                # Only increment if this is a new dislike (status 201), not a duplicate (409)
+                if response.status_code == 201:
+                    print(f"[DEBUG] New dislike created, incrementing video dislike count")
+                    await increment_video_dislikes(video_id)
+                elif response.status_code == 409:
+                    print(f"[DEBUG] Dislike already exists (conflict), skipping increment")
+                return True
+            return False
+        except Exception as e:
+            print(f"[ERROR] add_dislike exception: {e}")
+            return False
+
+
+async def remove_dislike(user_id: str, video_id: str) -> bool:
+    """
+    Remove a dislike for a video and decrement video's dislike count.
+
+    SQL equivalent:
+    DELETE FROM disliked_videos
+    WHERE user_id = {user_id} AND video_id = {video_id}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.delete(
+            f"{REST_URL}/disliked_videos",
+            headers={**HEADERS, "Prefer": "return=representation"},
+            params={
+                "user_id": f"eq.{user_id}",
+                "video_id": f"eq.{video_id}"
+            }
+        )
+
+        print(f"[DEBUG] remove_dislike response status: {response.status_code}")
+        print(f"[DEBUG] remove_dislike response body: {response.text}")
+
+        # Check if response indicates deletion occurred
+        if response.status_code in (200, 204):
+            # For status 200, check if any rows were deleted (response body should be empty array or have data)
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    deleted_count = len(data) if isinstance(data, list) else 1
+                    print(f"[DEBUG] Deleted {deleted_count} rows")
+                    # Only decrement if a dislike was actually deleted
+                    if deleted_count > 0:
+                        await decrement_video_dislikes(video_id)
+                    return deleted_count > 0
+                except:
+                    # If we can't parse response but got 200, assume success and decrement
+                    await decrement_video_dislikes(video_id)
+                    return True
+            # 204 No Content also indicates success, but we don't know if a row was deleted
+            # To be safe, we'll decrement only if we have confirmation
+            return True
+
+        print(f"[ERROR] Delete failed with status {response.status_code}")
+        return False
+
+
+async def is_video_disliked(user_id: str, video_id: str) -> bool:
+    """
+    Check if user has disliked a video.
+
+    SQL equivalent:
+    SELECT EXISTS(
+        SELECT 1 FROM disliked_videos
+        WHERE user_id = {user_id} AND video_id = {video_id}
+    )
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{REST_URL}/disliked_videos",
+            headers=HEADERS,
+            params={
+                "user_id": f"eq.{user_id}",
+                "video_id": f"eq.{video_id}",
+                "select": "id"
+            }
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            return len(data) > 0
+        return False
+
