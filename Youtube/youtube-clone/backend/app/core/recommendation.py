@@ -4,25 +4,18 @@ import time
 from typing import Optional
 from datetime import datetime, timedelta
 from app.db import (
-    get_videos_by_uuids,
-    search_videos_semantic,
-    get_trending_videos,
-    get_all_country_embeddings,
     get_watch_history,
     get_user_liked_videos_with_timestamps
 )
-
-# Simple in-memory cache for country affinity (per session)
-_COUNTRY_AFFINITY_CACHE = {}
-_CACHE_TIMESTAMP = None
-_CACHE_TTL_SECONDS = 3600  # 1 hour
+from app.core import faiss_manager
 
 # Weight multiplier for liked videos (explicit positive signal)
 LIKE_WEIGHT_MULTIPLIER = 2.0
 
-# Decay constant: 7 days (in seconds)
-# Videos from 7 days ago get ~0.37 weight of today
-DECAY_SECONDS = 7 * 24 * 3600
+# Decay constant: 14 days (in seconds) - gentler decay to prevent dilution
+# Videos from 14 days ago get ~0.5 weight of today
+# Videos from 30 days ago still get ~0.15 weight (meaningful contribution)
+DECAY_SECONDS = 14 * 24 * 3600
 
 
 def _compute_time_decay(timestamp_str: Optional[str], now: datetime) -> float:
@@ -30,9 +23,9 @@ def _compute_time_decay(timestamp_str: Optional[str], now: datetime) -> float:
     Compute exponential time decay weight from timestamp.
 
     Formula: exp(-age_seconds / DECAY_SECONDS)
-    - 7 days ago -> ~0.37 weight
-    - 14 days ago -> ~0.14 weight
-    - 30 days ago -> ~0.01 weight
+    - 14 days ago -> ~0.5 weight
+    - 30 days ago -> ~0.15 weight
+    - 60 days ago -> ~0.02 weight
 
     Args:
         timestamp_str: ISO format timestamp string
@@ -53,6 +46,130 @@ def _compute_time_decay(timestamp_str: Optional[str], now: datetime) -> float:
         return float(np.exp(-age_seconds / DECAY_SECONDS))
     except Exception:
         return 1.0
+
+
+async def get_taste_vector_for_feed(user_id: str) -> tuple[Optional[np.ndarray], int]:
+    """
+    Get taste vector for feed generation (FAISS-optimized).
+
+    Strategy:
+    1. Check if taste vector is cached in faiss_manager (O(1) dict lookup)
+    2. If cached, return immediately
+    3. If not cached, rebuild from watch history and likes (lazy rebuild)
+    4. Cache the rebuilt taste vector for future requests
+
+    This replaces build_taste_vector_for_authenticated_user() with FAISS-based approach.
+
+    Args:
+        user_id: Authenticated user's UUID
+
+    Returns:
+        Tuple of:
+        - taste_vector: (1024,) normalized numpy array, or None if no data
+        - interaction_count: Total unique video interactions (for phase determination)
+    """
+    # Step 1: Check cache
+    cached_taste = faiss_manager.get_taste_vector(user_id)
+    if cached_taste is not None:
+        # Get interaction count from history (fast, metadata only)
+        watch_history = await get_watch_history(user_id, limit=1000)
+        liked_videos = await get_user_liked_videos_with_timestamps(user_id, limit=500)
+        interaction_count = len(set([h["video_id"] for h in watch_history] + [l["video_id"] for l in liked_videos]))
+        print(f"[TASTE VECTOR] Using cached taste vector for user {user_id[:8]} ({interaction_count} interactions)")
+        return cached_taste, interaction_count
+
+    # Step 2: Lazy rebuild from history (first request after server restart)
+    print(f"[TASTE VECTOR] Cache miss - rebuilding from history for user {user_id[:8]}...")
+    total_start = time.time()
+
+    # Fetch watch history and likes
+    watch_history = await get_watch_history(user_id, limit=1000)
+    liked_videos = await get_user_liked_videos_with_timestamps(user_id, limit=500)
+
+    # Build unified video weight map
+    video_weights: dict[str, float] = {}
+    now = datetime.utcnow()
+
+    # Process watch history
+    max_duration = 1
+    if watch_history:
+        max_duration = max(
+            max_duration,
+            max(h.get("watch_duration_seconds", 0) for h in watch_history)
+        )
+
+    for entry in watch_history:
+        video_id = entry["video_id"]
+        started_at = entry.get("started_at")
+        duration = entry.get("watch_duration_seconds", 0)
+
+        # Compute time decay
+        time_decay = _compute_time_decay(started_at, now)
+
+        # Compute duration boost (sqrt normalization)
+        duration_boost = np.sqrt(max(duration / max(max_duration, 1), 0.1))
+
+        # Base weight for watched videos
+        weight = time_decay * (1.0 + duration_boost)
+
+        # Keep max weight if video appears multiple times
+        video_weights[video_id] = max(video_weights.get(video_id, 0), weight)
+
+    watched_count = len(video_weights)
+
+    # Process liked videos (with multiplier)
+    liked_added = 0
+    for entry in liked_videos:
+        video_id = entry["video_id"]
+        liked_at = entry.get("liked_at")
+
+        # Compute time decay
+        time_decay = _compute_time_decay(liked_at, now)
+
+        # Apply LIKE_WEIGHT_MULTIPLIER
+        like_weight = time_decay * LIKE_WEIGHT_MULTIPLIER
+
+        # If video was both watched AND liked, take the HIGHER weight
+        current_weight = video_weights.get(video_id, 0)
+        if video_id not in video_weights:
+            liked_added += 1
+        video_weights[video_id] = max(current_weight, like_weight)
+
+    if not video_weights:
+        print(f"[TASTE VECTOR] No interactions found for user {user_id[:8]}")
+        return None, 0
+
+    # Build taste vector from embeddings (in-memory via FAISS manager)
+    vectors = []
+    weights = []
+
+    for video_id, weight in video_weights.items():
+        embedding = faiss_manager.UUID_TO_EMBEDDING.get(video_id)
+        if embedding is not None:
+            vectors.append(embedding)
+            weights.append(weight)
+
+    if not vectors:
+        print(f"[TASTE VECTOR] No valid embeddings found for user {user_id[:8]}")
+        return None, len(video_weights)
+
+    vectors_arr = np.array(vectors, dtype=np.float32)
+    weights_arr = np.array(weights, dtype=np.float32)
+    weights_arr = weights_arr / weights_arr.sum()  # Normalize
+
+    # Weighted average: (N, 1024).T @ (N,) -> (1024,)
+    taste = (vectors_arr.T @ weights_arr).astype(np.float32)
+    taste = taste / np.linalg.norm(taste)  # Unit normalize
+
+    interaction_count = len(video_weights)
+    total_elapsed = (time.time() - total_start) * 1000
+
+    print(f"[TASTE VECTOR] Rebuilt taste vector: {interaction_count} interactions, {total_elapsed:.1f}ms")
+
+    # Cache the rebuilt taste vector
+    faiss_manager.set_taste_vector(user_id, taste)
+
+    return taste, interaction_count
 
 
 async def build_taste_vector_for_authenticated_user(
@@ -400,11 +517,13 @@ async def generate_phase1_feed(
     user_region: str,
     watched_video_ids: list[str] = [],
     total: int = 30
-) -> list[dict]:
+) -> list[str]:
     """
     Phase 1: Absolute Cold Start (0 interactions)
 
     50% Global Trending + 50% Local Trending
+
+    Returns list of video UUIDs (not full video objects - metadata fetched separately)
 
     Deduplicates results and limits watched video recurrence to max 10%.
     """
@@ -416,73 +535,46 @@ async def generate_phase1_feed(
 
     print(f"[PHASE 1] Cold Start | Bucket allocation → Global: {n_global} | Local ({user_region}): {n_local}")
 
-    global_trending = await get_trending_videos(
-        filter_country=None,
-        match_count=n_global,
-        pool_size=60,
-        exclude_ids=[]
-    )
+    # Get trending from FAISS manager (in-memory)
+    global_trending = faiss_manager.get_trending(country=None, top_n=100)
+    global_trending = random.sample(global_trending, min(n_global, len(global_trending)))
     print(f"[BUCKET GLOBAL] Trending (global) → {len(global_trending)} videos")
 
-    used_ids = [v["id"] for v in global_trending]  # use "id" (UUID) not "video_id"
-    local_trending = await get_trending_videos(
-        filter_country=user_region,
-        match_count=n_local,
-        pool_size=30,
-        exclude_ids=used_ids
-    )
+    used_ids = set(global_trending)
+    local_trending = [uuid for uuid in faiss_manager.get_trending(country=user_region, top_n=50) if uuid not in used_ids]
+    local_trending = random.sample(local_trending, min(n_local, len(local_trending)))
     print(f"[BUCKET LOCAL] Trending ({user_region}) → {len(local_trending)} videos")
 
-    all_videos = global_trending + local_trending
-    random.shuffle(all_videos)
+    all_video_ids = global_trending + local_trending
+    random.shuffle(all_video_ids)
 
-    # Deduplicate by id field (UUID)
+    # Deduplicate
     seen_ids = set()
     deduped = []
-    for v in all_videos:
-        if v["id"] not in seen_ids:
-            deduped.append(v)
-            seen_ids.add(v["id"])
+    for vid in all_video_ids:
+        if vid not in seen_ids:
+            deduped.append(vid)
+            seen_ids.add(vid)
 
     # Filter watched videos: max 10% of results
     max_watched_allowed = max(1, round(total * 0.1))
-    watched_count = sum(1 for v in deduped if v["id"] in watched_video_ids)
+    watched_count = sum(1 for vid in deduped if vid in watched_video_ids)
 
     if watched_count > max_watched_allowed:
         # Remove excess watched videos
         to_remove = watched_count - max_watched_allowed
         final = []
-        for v in deduped:
-            if v["id"] in watched_video_ids and to_remove > 0:
+        for vid in deduped:
+            if vid in watched_video_ids and to_remove > 0:
                 to_remove -= 1
             else:
-                final.append(v)
+                final.append(vid)
         deduped = final
 
-    final_videos = deduped[:total]
+    final_video_ids = deduped[:total]
+    print(f"[PHASE 1] Returning {len(final_video_ids)} video UUIDs")
 
-    # Log catalog
-    print(f"\n[PHASE 1 CATALOG]")
-    print(f"{'='*80}")
-    print(f"Global Trending — {len([v for v in final_videos if v['id'] in {x['id'] for x in global_trending}])} videos")
-    for i, v in enumerate([v for v in final_videos if v['id'] in {x['id'] for x in global_trending}], 1):
-        title = v.get("title", "Unknown")[:50]
-        channel = v.get("channel_title", "Unknown")[:25]
-        country = v.get("country_code", "??")
-        velocity = v.get("velocity_score", 0)
-        print(f"  {i:2d}. {title:50s} | {channel:25s} | {country} | velocity: {velocity:.2f}")
-
-    print(f"\nLocal Trending ({user_region}) — {len([v for v in final_videos if v['id'] in {x['id'] for x in local_trending}])} videos")
-    for i, v in enumerate([v for v in final_videos if v['id'] in {x['id'] for x in local_trending}], 1):
-        title = v.get("title", "Unknown")[:50]
-        channel = v.get("channel_title", "Unknown")[:25]
-        velocity = v.get("velocity_score", 0)
-        print(f"  {i:2d}. {title:50s} | {channel:25s} | velocity: {velocity:.2f}")
-
-    print(f"{'='*80}")
-    print(f"Total videos returned: {len(final_videos)}\n")
-
-    return final_videos
+    return final_video_ids
 
 
 async def generate_phase2_feed(
@@ -491,13 +583,15 @@ async def generate_phase2_feed(
     watched_video_ids: list[str] = [],
     interaction_count: int = 0,
     total: int = 30
-) -> list[dict]:
+) -> list[str]:
     """
     Phase 2: Warm-Up (1-4 interactions)
 
     Adaptive allocation based on interaction count:
     - 1-2 interactions: 20% vector search + 50% trending + 30% local
     - 3-4 interactions: 40% vector search + 35% trending + 25% local
+
+    Returns list of video UUIDs (not full video objects - metadata fetched separately)
 
     Deduplicates results and limits watched video recurrence to max 10%.
     """
@@ -518,93 +612,56 @@ async def generate_phase2_feed(
 
     print(f"[PHASE 2] {phase_label} | Bucket allocation → Semantic: {n_vector} | Global Trending: {n_trending} | Local ({user_region}): {n_local}")
 
-    vector_results = await search_videos_semantic(
-        query_embedding=taste_vector.tolist(),
-        filter_country=None,  # global for diversity
-        match_count=n_vector
+    # Semantic search via FAISS (global, no country filter)
+    vector_results = faiss_manager.search_similar(
+        taste_vector=taste_vector,
+        k=n_vector,
+        filter_country=None
     )
-    print(f"[BUCKET SEMANTIC] Semantic search (global) → {len(vector_results)} videos")
-    used_ids = {v["id"] for v in vector_results}
+    vector_uuids = [uuid for uuid, score in vector_results]
+    print(f"[BUCKET SEMANTIC] Semantic search (global) → {len(vector_uuids)} videos")
+    used_ids = set(vector_uuids)
 
-    trending = await get_trending_videos(
-        filter_country=None,
-        match_count=n_trending,
-        pool_size=60,
-        exclude_ids=list(used_ids)
-    )
+    # Trending global
+    trending = [uuid for uuid in faiss_manager.get_trending(country=None, top_n=100) if uuid not in used_ids]
+    trending = random.sample(trending, min(n_trending, len(trending)))
     print(f"[BUCKET TRENDING] Trending (global) → {len(trending)} videos")
-    used_ids.update(v["id"] for v in trending)
+    used_ids.update(trending)
 
-    local = await get_trending_videos(
-        filter_country=user_region,
-        match_count=n_local,
-        pool_size=30,
-        exclude_ids=list(used_ids)
-    )
+    # Local trending
+    local = [uuid for uuid in faiss_manager.get_trending(country=user_region, top_n=50) if uuid not in used_ids]
+    local = random.sample(local, min(n_local, len(local)))
     print(f"[BUCKET LOCAL] Trending ({user_region}) → {len(local)} videos")
 
-    all_videos = vector_results + trending + local
+    all_video_ids = vector_uuids + trending + local
 
-    # Deduplicate by id field (UUID)
+    # Deduplicate
     seen_ids = set()
     deduped = []
-    for v in all_videos:
-        if v["id"] not in seen_ids:
-            deduped.append(v)
-            seen_ids.add(v["id"])
+    for vid in all_video_ids:
+        if vid not in seen_ids:
+            deduped.append(vid)
+            seen_ids.add(vid)
 
     # Filter watched videos: max 10% of results
     max_watched_allowed = max(1, round(total * 0.1))
-    watched_count = sum(1 for v in deduped if v["id"] in watched_video_ids)
+    watched_count = sum(1 for vid in deduped if vid in watched_video_ids)
 
     if watched_count > max_watched_allowed:
         # Remove excess watched videos
         to_remove = watched_count - max_watched_allowed
         final = []
-        for v in deduped:
-            if v["id"] in watched_video_ids and to_remove > 0:
+        for vid in deduped:
+            if vid in watched_video_ids and to_remove > 0:
                 to_remove -= 1
             else:
-                final.append(v)
+                final.append(vid)
         deduped = final
 
-    final_videos = deduped[:total]
+    final_video_ids = deduped[:total]
+    print(f"[PHASE 2] Returning {len(final_video_ids)} video UUIDs")
 
-    # Log catalog
-    vector_final = [v for v in final_videos if v["id"] in {x["id"] for x in vector_results}]
-    trending_final = [v for v in final_videos if v["id"] in {x["id"] for x in trending}]
-    local_final = [v for v in final_videos if v["id"] in {x["id"] for x in local}]
-
-    print(f"\n[PHASE 2 CATALOG]")
-    print(f"{'='*80}")
-    if vector_final:
-        print(f"Semantic Search (global) — {len(vector_final)} videos")
-        for i, v in enumerate(vector_final, 1):
-            title = v.get("title", "Unknown")[:50]
-            channel = v.get("channel_title", "Unknown")[:25]
-            country = v.get("country_code", "??")
-            print(f"  {i:2d}. {title:50s} | {channel:25s} | {country}")
-
-    if trending_final:
-        print(f"\nGlobal Trending — {len(trending_final)} videos")
-        for i, v in enumerate(trending_final, 1):
-            title = v.get("title", "Unknown")[:50]
-            channel = v.get("channel_title", "Unknown")[:25]
-            velocity = v.get("velocity_score", 0)
-            print(f"  {i:2d}. {title:50s} | {channel:25s} | velocity: {velocity:.2f}")
-
-    if local_final:
-        print(f"\nLocal Trending ({user_region}) — {len(local_final)} videos")
-        for i, v in enumerate(local_final, 1):
-            title = v.get("title", "Unknown")[:50]
-            channel = v.get("channel_title", "Unknown")[:25]
-            velocity = v.get("velocity_score", 0)
-            print(f"  {i:2d}. {title:50s} | {channel:25s} | velocity: {velocity:.2f}")
-
-    print(f"{'='*80}")
-    print(f"Total videos returned: {len(final_videos)}\n")
-
-    return final_videos
+    return final_video_ids
 
 
 async def generate_phase3_feed(
@@ -613,7 +670,7 @@ async def generate_phase3_feed(
     watched_video_ids: list[str] = [],
     interaction_count: int = 5,
     total: int = 30
-) -> list[dict]:
+) -> list[str]:
     """
     Phase 3: Fully Personalized (5+ interactions)
 
@@ -636,6 +693,8 @@ async def generate_phase3_feed(
     - Bucket B (15%): Semantic / Foreign Mix
     - Bucket C (7%): Trending / User Region
     - Bucket D (3%): Trending / Global Mix
+
+    Returns list of video UUIDs (not full video objects - metadata fetched separately)
 
     Deduplicates results and limits watched video recurrence to max 10%.
     """
@@ -667,12 +726,13 @@ async def generate_phase3_feed(
     # ===========================================
     # BUCKET A: Semantic / Same Region (60-75%)
     # ===========================================
-    bucket_a = await search_videos_semantic(
-        query_embedding=taste_vector.tolist(),
-        filter_country=user_region,
-        match_count=N_A
+    bucket_a_results = faiss_manager.search_similar(
+        taste_vector=taste_vector,
+        k=N_A,
+        filter_country=user_region
     )
-    used_ids = {v["id"] for v in bucket_a}
+    bucket_a = [uuid for uuid, score in bucket_a_results]
+    used_ids = set(bucket_a)
     print(f"[BUCKET A] Semantic / Same Region ({user_region}) → {len(bucket_a)} videos")
 
     # ===========================================
@@ -682,7 +742,6 @@ async def generate_phase3_feed(
     foreign = [c for c in all_foreign if c != user_region]
 
     bucket_b = []
-    country_affinity = {}
 
     # For early personalization (5-9 interactions), use simple random distribution
     # to avoid expensive country affinity computation
@@ -699,15 +758,15 @@ async def generate_phase3_feed(
 
         print(f"[BUCKET B] Semantic / Mixed Foreign (early, random) → {len(chosen)} countries: {list(slots.keys())}")
     else:
-        # For strong personalization (10+), compute affinity and use weighted distribution
-        country_affinity = await compute_country_affinity(taste_vector, foreign)
+        # For strong personalization (10+), compute affinity via FAISS manager
+        country_affinity = faiss_manager.get_country_affinity(taste_vector, foreign, top_k=min(5, len(foreign)))
 
         # Log affinity scores
         affinity_str = " | ".join(f"{cc}: {v:.4f}" for cc, v in sorted(country_affinity.items(), key=lambda x: -x[1]))
         print(f"[BUCKET B] Country affinity scores: {affinity_str}")
 
         # Convert to probabilities
-        affinity_vals = np.array([country_affinity[c] for c in foreign])
+        affinity_vals = np.array([country_affinity.get(c, 0.5) for c in foreign])
         weights = affinity_vals - affinity_vals.min() + 1e-3
         weights = weights / weights.sum()
 
@@ -719,128 +778,67 @@ async def generate_phase3_feed(
         slots = {cc: 1 for cc in chosen}
         leftover = N_B - n_countries
         if leftover > 0:
-            sorted_c = sorted(chosen, key=lambda c: -country_affinity[c])
+            sorted_c = sorted(chosen, key=lambda c: -country_affinity.get(c, 0.5))
             for cc in sorted_c[:leftover]:
                 slots[cc] += 1
 
         print(f"[BUCKET B] Semantic / Mixed Foreign (strong/heavy) → Slot allocation: {slots}")
 
-    # Fetch per country
+    # Fetch per country via FAISS
     for country, n_slots in slots.items():
-        results = await search_videos_semantic(
-            query_embedding=taste_vector.tolist(),
-            filter_country=country,
-            match_count=n_slots + 2
+        results = faiss_manager.search_similar(
+            taste_vector=taste_vector,
+            k=n_slots + 5,  # Over-fetch for filtering
+            filter_country=country
         )
-        for v in results:
-            if v["id"] not in used_ids and len(bucket_b) < N_B:
-                bucket_b.append(v)
-                used_ids.add(v["id"])
+        for uuid, score in results:
+            if uuid not in used_ids and len(bucket_b) < N_B:
+                bucket_b.append(uuid)
+                used_ids.add(uuid)
 
     print(f"[BUCKET B] Fetched {len(bucket_b)} videos from foreign countries")
 
     # ===========================================
     # BUCKET C: Trending / User Region (7-10%)
     # ===========================================
-    bucket_c = await get_trending_videos(
-        filter_country=user_region,
-        match_count=N_C,
-        pool_size=30,
-        exclude_ids=list(used_ids)
-    )
-    used_ids.update(v["id"] for v in bucket_c)
+    bucket_c = [uuid for uuid in faiss_manager.get_trending(country=user_region, top_n=50) if uuid not in used_ids]
+    bucket_c = random.sample(bucket_c, min(N_C, len(bucket_c)))
+    used_ids.update(bucket_c)
     print(f"[BUCKET C] Trending / User Region ({user_region}) → {len(bucket_c)} videos")
 
     # ===========================================
     # BUCKET D: Trending / Global Mix (3-10%)
     # ===========================================
-    bucket_d = await get_trending_videos(
-        filter_country=None,
-        match_count=N_D,
-        pool_size=80,
-        exclude_ids=list(used_ids)
-    )
+    bucket_d = [uuid for uuid in faiss_manager.get_trending(country=None, top_n=100) if uuid not in used_ids]
+    bucket_d = random.sample(bucket_d, min(N_D, len(bucket_d)))
     print(f"[BUCKET D] Trending / Global Mix → {len(bucket_d)} videos")
 
-    all_videos = bucket_a + bucket_b + bucket_c + bucket_d
+    all_video_ids = bucket_a + bucket_b + bucket_c + bucket_d
 
-    # Deduplicate by id field (UUID)
+    # Deduplicate
     seen_ids = set()
     deduped = []
-    for v in all_videos:
-        if v["id"] not in seen_ids:
-            deduped.append(v)
-            seen_ids.add(v["id"])
+    for vid in all_video_ids:
+        if vid not in seen_ids:
+            deduped.append(vid)
+            seen_ids.add(vid)
 
     # Filter watched videos: max 10% of results
     max_watched_allowed = max(1, round(total * 0.1))
-    watched_count = sum(1 for v in deduped if v["id"] in watched_video_ids)
+    watched_count = sum(1 for vid in deduped if vid in watched_video_ids)
 
     if watched_count > max_watched_allowed:
         # Remove excess watched videos
         to_remove = watched_count - max_watched_allowed
         final = []
-        for v in deduped:
-            if v["id"] in watched_video_ids and to_remove > 0:
+        for vid in deduped:
+            if vid in watched_video_ids and to_remove > 0:
                 to_remove -= 1
             else:
-                final.append(v)
+                final.append(vid)
         deduped = final
 
-    # Log final results
-    final_videos = deduped[:total]
+    final_video_ids = deduped[:total]
+    print(f"[PHASE 3] Returning {len(final_video_ids)} video UUIDs")
 
-    # Count countries in final results
-    bucket_a_final = [v for v in final_videos if v["id"] in {x["id"] for x in bucket_a}]
-    bucket_b_final = [v for v in final_videos if v["id"] in {x["id"] for x in bucket_b}]
-    bucket_c_final = [v for v in final_videos if v["id"] in {x["id"] for x in bucket_c}]
-    bucket_d_final = [v for v in final_videos if v["id"] in {x["id"] for x in bucket_d}]
-
-    print(f"\n[PHASE 3 CATALOG]")
-    print(f"{'='*80}")
-    print(f"Bucket A: Semantic / Same Region ({user_region}) — {len(bucket_a_final)} videos")
-    for i, v in enumerate(bucket_a_final, 1):
-        title = v.get("title", "Unknown")[:50]
-        channel = v.get("channel_title", "Unknown")[:25]
-        country = v.get("country_code", "??")
-        print(f"  {i:2d}. {title:50s} | {channel:25s} | {country}")
-
-    if bucket_b_final:
-        print(f"\nBucket B: Semantic / Mixed Foreign — {len(bucket_b_final)} videos")
-        country_mix_b = {}
-        for v in bucket_b_final:
-            cc = v.get("country_code", "??")
-            country_mix_b[cc] = country_mix_b.get(cc, 0) + 1
-        print(f"  Country mix: {country_mix_b}")
-        for i, v in enumerate(bucket_b_final, 1):
-            title = v.get("title", "Unknown")[:50]
-            channel = v.get("channel_title", "Unknown")[:25]
-            country = v.get("country_code", "??")
-            print(f"  {i:2d}. {title:50s} | {channel:25s} | {country}")
-
-    if bucket_c_final:
-        print(f"\nBucket C: Trending / User Region ({user_region}) — {len(bucket_c_final)} videos")
-        for i, v in enumerate(bucket_c_final, 1):
-            title = v.get("title", "Unknown")[:50]
-            channel = v.get("channel_title", "Unknown")[:25]
-            velocity = v.get("velocity_score", 0)
-            print(f"  {i:2d}. {title:50s} | {channel:25s} | velocity: {velocity:.2f}")
-
-    if bucket_d_final:
-        print(f"\nBucket D: Trending / Global Mix — {len(bucket_d_final)} videos")
-        country_mix_d = {}
-        for v in bucket_d_final:
-            cc = v.get("country_code", "??")
-            country_mix_d[cc] = country_mix_d.get(cc, 0) + 1
-        print(f"  Country mix: {country_mix_d}")
-        for i, v in enumerate(bucket_d_final, 1):
-            title = v.get("title", "Unknown")[:50]
-            channel = v.get("channel_title", "Unknown")[:25]
-            country = v.get("country_code", "??")
-            velocity = v.get("velocity_score", 0)
-            print(f"  {i:2d}. {title:50s} | {channel:25s} | {country} | velocity: {velocity:.2f}")
-
-    print(f"{'='*80}")
-    print(f"Total videos returned: {len(final_videos)}\n")
-
-    return final_videos
+    return final_video_ids

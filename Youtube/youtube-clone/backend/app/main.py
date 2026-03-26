@@ -1,14 +1,45 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from contextlib import asynccontextmanager
 from app.config import get_settings
 from app.api.routes import auth, guest, feed
 
 settings = get_settings()
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Lifespan event handler for startup and shutdown tasks.
+
+    Startup:
+    - Initialize FAISS index with all video embeddings from database
+    - Loads ~100-150MB into RAM for fast similarity search
+
+    Shutdown:
+    - Optional: Save user taste vectors to database (not implemented yet)
+    """
+    # Startup
+    print("[BOOT] Initializing FAISS index...")
+    from app.core import faiss_manager
+    await faiss_manager.initialize_faiss()
+
+    # Print stats
+    stats = faiss_manager.get_index_stats()
+    print(f"[BOOT] FAISS index ready: {stats['total_videos']} videos, {stats['memory_mb_videos']:.1f} MB")
+
+    yield
+
+    # Shutdown
+    print("[SHUTDOWN] Server stopping...")
+    # TODO: Optional - save USER_TASTE_VECTORS to database for faster restart
+
+
 app = FastAPI(
     title="YouTube Clone API",
     version="1.0.0",
-    description="Backend API for YouTube Clone - Verifies Supabase Auth tokens"
+    description="Backend API for YouTube Clone - Verifies Supabase Auth tokens",
+    lifespan=lifespan
 )
 
 # CORS Configuration

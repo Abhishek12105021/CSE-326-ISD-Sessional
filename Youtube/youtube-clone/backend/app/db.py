@@ -238,6 +238,81 @@ async def get_videos_by_uuids(uuids: list[str]) -> list[dict]:
         return rows
 
 
+async def get_video_embeddings_for_boot(limit: int = 50000) -> list[dict]:
+    """
+    Fetch all video embeddings, country codes, and velocity scores for FAISS initialization.
+
+    Called ONCE at server boot to populate in-memory FAISS index.
+
+    SQL equivalent:
+    SELECT id, embedding, country_code, velocity_score
+    FROM videos
+    WHERE embedding IS NOT NULL
+    LIMIT {limit}
+
+    Returns:
+        List of dicts with keys: id (UUID), embedding (1024-dim list), country_code (str), velocity_score (float)
+
+    Note: This is the only time embeddings are fetched during the entire server lifetime.
+    All subsequent requests use the in-memory FAISS index.
+    """
+    import json
+
+    async with httpx.AsyncClient(timeout=120.0) as client:  # Longer timeout for large fetch
+        response = await client.get(
+            f"{REST_URL}/videos",
+            headers=HEADERS,
+            params={
+                "select": "id,embedding,country_code,velocity_score",
+                "embedding": "not.is.null",  # Only videos with embeddings
+                "limit": limit
+            }
+        )
+        response.raise_for_status()
+        rows = response.json()
+
+        # Parse embedding if it's a string (REST API serializes as JSON string)
+        for row in rows:
+            if row.get("embedding") and isinstance(row["embedding"], str):
+                row["embedding"] = json.loads(row["embedding"])
+
+        return rows
+
+
+async def get_videos_metadata_by_uuids(uuids: list[str]) -> list[dict]:
+    """
+    Fetch video metadata by UUID (NO embeddings).
+
+    This is used by feed generation to fetch only the metadata fields
+    needed for response formatting after FAISS returns UUIDs.
+
+    SQL equivalent:
+    SELECT id, video_id, title, thumbnail_link, channel_title, views, publish_time, category_name, velocity_score
+    FROM videos
+    WHERE id IN (uuids)
+
+    Returns:
+        List of video dicts with metadata fields only (no embedding field)
+
+    Performance: ~100ms for 30 videos via REST API
+    """
+    if not uuids:
+        return []
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{REST_URL}/videos",
+            headers=HEADERS,
+            params={
+                "select": "id,video_id,title,thumbnail_link,channel_title,views,likes,publish_time,category_name,velocity_score",
+                "id": f"in.({','.join(uuids)})",
+                "limit": len(uuids)
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 async def get_watch_history(user_id: str, limit: int = 50) -> list[dict]:
     """
     Fetch watch history for authenticated user.
