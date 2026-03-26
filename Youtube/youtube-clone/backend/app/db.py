@@ -372,3 +372,137 @@ async def get_unique_categories() -> list[str]:
         response.raise_for_status()
         rows = response.json()
         return sorted(set(row["category_name"] for row in rows if row.get("category_name")))
+
+
+# ======================== LIKES MANAGEMENT ========================
+
+
+async def get_user_liked_videos(user_id: str, limit: int = 100) -> list[dict]:
+    """
+    Fetch all videos liked by user.
+
+    SQL equivalent:
+    SELECT v.* FROM videos v
+    JOIN liked_videos lv ON v.id = lv.video_id
+    WHERE lv.user_id = {user_id}
+    ORDER BY lv.liked_at DESC
+    LIMIT {limit}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # First get liked video IDs from liked_videos
+        response = await client.get(
+            f"{REST_URL}/liked_videos",
+            headers=HEADERS,
+            params={
+                "select": "video_id",
+                "user_id": f"eq.{user_id}",
+                "order": "liked_at.desc",
+                "limit": limit
+            }
+        )
+        response.raise_for_status()
+        likes = response.json()
+
+        if not likes:
+            return []
+
+        # Extract video IDs and fetch full video data
+        video_ids = [like["video_id"] for like in likes]
+        return await get_videos_by_uuids(video_ids)
+
+
+async def add_like(user_id: str, video_id: str) -> bool:
+    """
+    Add a like for a video.
+
+    SQL equivalent:
+    INSERT INTO liked_videos (user_id, video_id, liked_at)
+    VALUES ({user_id}, {video_id}, NOW())
+    ON CONFLICT DO NOTHING
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        payload = {
+            "user_id": user_id,
+            "video_id": video_id
+        }
+        try:
+            response = await client.post(
+                f"{REST_URL}/liked_videos",
+                headers={**HEADERS, "Prefer": "resolution=ignore-duplicates"},
+                json=payload
+            )
+
+            print(f"[DEBUG] add_like response status: {response.status_code}")
+            print(f"[DEBUG] add_like response body: {response.text}")
+
+            # 201 = created, 409 = conflict (already liked), both are success
+            return response.status_code in (200, 201, 409)
+        except Exception as e:
+            print(f"[ERROR] add_like exception: {e}")
+            return False
+
+
+async def remove_like(user_id: str, video_id: str) -> bool:
+    """
+    Remove a like for a video.
+
+    SQL equivalent:
+    DELETE FROM liked_videos
+    WHERE user_id = {user_id} AND video_id = {video_id}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.delete(
+            f"{REST_URL}/liked_videos",
+            headers={**HEADERS, "Prefer": "return=representation"},
+            params={
+                "user_id": f"eq.{user_id}",
+                "video_id": f"eq.{video_id}"
+            }
+        )
+
+        print(f"[DEBUG] remove_like response status: {response.status_code}")
+        print(f"[DEBUG] remove_like response body: {response.text}")
+
+        # Check if response indicates deletion occurred
+        if response.status_code in (200, 204):
+            # For status 200, check if any rows were deleted (response body should be empty array or have data)
+            if response.status_code == 200:
+                try:
+                    data = response.json()
+                    deleted_count = len(data) if isinstance(data, list) else 1
+                    print(f"[DEBUG] Deleted {deleted_count} rows")
+                    return deleted_count > 0
+                except:
+                    return True  # 200 OK means deletion was processed
+            # 204 No Content also indicates success
+            return True
+
+        print(f"[ERROR] Delete failed with status {response.status_code}")
+        return False
+
+
+async def is_video_liked(user_id: str, video_id: str) -> bool:
+    """
+    Check if user has liked a video.
+
+    SQL equivalent:
+    SELECT EXISTS(
+        SELECT 1 FROM liked_videos
+        WHERE user_id = {user_id} AND video_id = {video_id}
+    )
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{REST_URL}/liked_videos",
+            headers=HEADERS,
+            params={
+                "user_id": f"eq.{user_id}",
+                "video_id": f"eq.{video_id}",
+                "select": "id"
+            }
+        )
+
+        if response.status_code == 200:
+            data = response.json()
+            return len(data) > 0
+        return False

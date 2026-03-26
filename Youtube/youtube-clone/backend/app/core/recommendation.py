@@ -204,39 +204,72 @@ async def compute_country_affinity(
     return country_affinity
 
 
-async def generate_phase1_feed(user_region: str, total: int = 30) -> list[dict]:
+async def generate_phase1_feed(
+    user_region: str,
+    watched_video_ids: list[str] = None,
+    total: int = 30
+) -> list[dict]:
     """
     Phase 1: Absolute Cold Start (0 interactions)
 
     50% Global Trending + 50% Local Trending
+
+    Deduplicates results and limits watched video recurrence to max 10%.
     """
+    if watched_video_ids is None:
+        watched_video_ids = []
+
     n_global = total // 2
     n_local = total - n_global
 
     global_trending = await get_trending_videos(
         filter_country=None,
         match_count=n_global,
-        pool_size=60,  # Reduced from 100
+        pool_size=60,
         exclude_ids=[]
     )
 
-    used_ids = [v["video_id"] for v in global_trending]
+    used_ids = [v["id"] for v in global_trending]  # use "id" (UUID) not "video_id"
     local_trending = await get_trending_videos(
         filter_country=user_region,
         match_count=n_local,
-        pool_size=30,  # Reduced from 50
+        pool_size=30,
         exclude_ids=used_ids
     )
 
     all_videos = global_trending + local_trending
     random.shuffle(all_videos)
 
-    return all_videos[:total]
+    # Deduplicate by id field (UUID)
+    seen_ids = set()
+    deduped = []
+    for v in all_videos:
+        if v["id"] not in seen_ids:
+            deduped.append(v)
+            seen_ids.add(v["id"])
+
+    # Filter watched videos: max 10% of results
+    max_watched_allowed = max(1, round(total * 0.1))
+    watched_count = sum(1 for v in deduped if v["id"] in watched_video_ids)
+
+    if watched_count > max_watched_allowed:
+        # Remove excess watched videos
+        to_remove = watched_count - max_watched_allowed
+        final = []
+        for v in deduped:
+            if v["id"] in watched_video_ids and to_remove > 0:
+                to_remove -= 1
+            else:
+                final.append(v)
+        deduped = final
+
+    return deduped[:total]
 
 
 async def generate_phase2_feed(
     taste_vector: np.ndarray,
     user_region: str,
+    watched_video_ids: list[str] = None,
     interaction_count: int = 0,
     total: int = 30
 ) -> list[dict]:
@@ -247,8 +280,11 @@ async def generate_phase2_feed(
     - 1-2 interactions: 20% vector search + 50% trending + 30% local
     - 3-4 interactions: 40% vector search + 35% trending + 25% local
 
-    As users watch more, we increase trust in the taste vector.
+    Deduplicates results and limits watched video recurrence to max 10%.
     """
+    if watched_video_ids is None:
+        watched_video_ids = []
+
     # Increase vector search weight as history grows
     if interaction_count <= 2:
         n_vector = round(total * 0.2)
@@ -264,30 +300,55 @@ async def generate_phase2_feed(
         filter_country=None,  # global for diversity
         match_count=n_vector
     )
-    used_ids = {v["video_id"] for v in vector_results}
+    used_ids = {v["id"] for v in vector_results}
 
     trending = await get_trending_videos(
         filter_country=None,
         match_count=n_trending,
-        pool_size=60,  # Reduced from 100
+        pool_size=60,
         exclude_ids=list(used_ids)
     )
-    used_ids.update(v["video_id"] for v in trending)
+    used_ids.update(v["id"] for v in trending)
 
     local = await get_trending_videos(
         filter_country=user_region,
         match_count=n_local,
-        pool_size=30,  # Reduced from 50
+        pool_size=30,
         exclude_ids=list(used_ids)
     )
 
     all_videos = vector_results + trending + local
-    return all_videos[:total]
+
+    # Deduplicate by id field (UUID)
+    seen_ids = set()
+    deduped = []
+    for v in all_videos:
+        if v["id"] not in seen_ids:
+            deduped.append(v)
+            seen_ids.add(v["id"])
+
+    # Filter watched videos: max 10% of results
+    max_watched_allowed = max(1, round(total * 0.1))
+    watched_count = sum(1 for v in deduped if v["id"] in watched_video_ids)
+
+    if watched_count > max_watched_allowed:
+        # Remove excess watched videos
+        to_remove = watched_count - max_watched_allowed
+        final = []
+        for v in deduped:
+            if v["id"] in watched_video_ids and to_remove > 0:
+                to_remove -= 1
+            else:
+                final.append(v)
+        deduped = final
+
+    return deduped[:total]
 
 
 async def generate_phase3_feed(
     taste_vector: np.ndarray,
     user_region: str,
+    watched_video_ids: list[str] = None,
     interaction_count: int = 5,
     total: int = 30
 ) -> list[dict]:
@@ -313,7 +374,12 @@ async def generate_phase3_feed(
     - Bucket B (15%): Semantic / Foreign Mix
     - Bucket C (7%): Trending / User Region
     - Bucket D (3%): Trending / Global Mix
+
+    Deduplicates results and limits watched video recurrence to max 10%.
     """
+    if watched_video_ids is None:
+        watched_video_ids = []
+
     # Determine allocation based on interaction count
     if interaction_count < 10:
         N_A = round(total * 0.60)
@@ -338,7 +404,7 @@ async def generate_phase3_feed(
         filter_country=user_region,
         match_count=N_A
     )
-    used_ids = {v["video_id"] for v in bucket_a}
+    used_ids = {v["id"] for v in bucket_a}
 
     # ===========================================
     # BUCKET B: Semantic / Mixed Foreign (15-20%)
@@ -389,9 +455,9 @@ async def generate_phase3_feed(
             match_count=n_slots + 2
         )
         for v in results:
-            if v["video_id"] not in used_ids and len(bucket_b) < N_B:
+            if v["id"] not in used_ids and len(bucket_b) < N_B:
                 bucket_b.append(v)
-                used_ids.add(v["video_id"])
+                used_ids.add(v["id"])
 
     # ===========================================
     # BUCKET C: Trending / User Region (7-10%)
@@ -399,10 +465,10 @@ async def generate_phase3_feed(
     bucket_c = await get_trending_videos(
         filter_country=user_region,
         match_count=N_C,
-        pool_size=30,  # Reduced from 50
+        pool_size=30,
         exclude_ids=list(used_ids)
     )
-    used_ids.update(v["video_id"] for v in bucket_c)
+    used_ids.update(v["id"] for v in bucket_c)
 
     # ===========================================
     # BUCKET D: Trending / Global Mix (3-10%)
@@ -410,9 +476,33 @@ async def generate_phase3_feed(
     bucket_d = await get_trending_videos(
         filter_country=None,
         match_count=N_D,
-        pool_size=80,  # Reduced from 150
+        pool_size=80,
         exclude_ids=list(used_ids)
     )
 
     all_videos = bucket_a + bucket_b + bucket_c + bucket_d
-    return all_videos[:total]
+
+    # Deduplicate by id field (UUID)
+    seen_ids = set()
+    deduped = []
+    for v in all_videos:
+        if v["id"] not in seen_ids:
+            deduped.append(v)
+            seen_ids.add(v["id"])
+
+    # Filter watched videos: max 10% of results
+    max_watched_allowed = max(1, round(total * 0.1))
+    watched_count = sum(1 for v in deduped if v["id"] in watched_video_ids)
+
+    if watched_count > max_watched_allowed:
+        # Remove excess watched videos
+        to_remove = watched_count - max_watched_allowed
+        final = []
+        for v in deduped:
+            if v["id"] in watched_video_ids and to_remove > 0:
+                to_remove -= 1
+            else:
+                final.append(v)
+        deduped = final
+
+    return deduped[:total]

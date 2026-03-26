@@ -75,7 +75,7 @@ async def get_guest_feed(request: GuestFeedRequest):
     # Determine phase
     if interaction_count == 0:
         strategy = "phase_1_cold_start"
-        videos = await generate_phase1_feed(request.region, request.limit)
+        videos = await generate_phase1_feed(request.region, watched_uuids, request.limit)
 
     elif 1 <= interaction_count <= 4:
         strategy = "phase_2_warm_up"
@@ -86,8 +86,8 @@ async def get_guest_feed(request: GuestFeedRequest):
             use_recency_weighting=True
         )
         videos = await generate_phase2_feed(
-            taste, request.region, interaction_count, request.limit
-        ) if taste is not None else await generate_phase1_feed(request.region, request.limit)
+            taste, request.region, watched_uuids, interaction_count, request.limit
+        ) if taste is not None else await generate_phase1_feed(request.region, watched_uuids, request.limit)
 
     else:
         strategy = "phase_3_personalized"
@@ -98,8 +98,8 @@ async def get_guest_feed(request: GuestFeedRequest):
             use_recency_weighting=True
         )
         videos = await generate_phase3_feed(
-            taste, request.region, interaction_count, request.limit
-        ) if taste is not None else await generate_phase1_feed(request.region, request.limit)
+            taste, request.region, watched_uuids, interaction_count, request.limit
+        ) if taste is not None else await generate_phase1_feed(request.region, watched_uuids, request.limit)
 
     # Transform
     def transform_video(v: dict) -> VideoResponse:
@@ -132,7 +132,7 @@ async def get_guest_feed(request: GuestFeedRequest):
     
     
     
-    
+    # "watched_video_ids": ["bceacc63-b338-48b3-8f24-626c0baa7dec", "fb9dae2b-6b2b-4ced-bdff-b9c710fd9647","caf56f2c-2f1f-47da-bfb1-50bccf671a0f", "4378c33f-e2b0-4615-ab3a-c64f90f2ee37", "57be1452-3c68-46ed-bf98-4cd21696cd1f"]
     
     
     

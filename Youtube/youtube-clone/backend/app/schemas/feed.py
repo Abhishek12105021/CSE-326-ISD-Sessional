@@ -52,3 +52,24 @@ class WatchEventResponse(BaseModel):
 
 class CategoriesResponse(BaseModel):
     categories: list[str]
+
+
+# ======================== LIKES ========================
+
+
+class LikeVideoRequest(BaseModel):
+    """Request to like/unlike a video"""
+    video_uuid: str  # UUID from videos.id
+
+
+class LikeResponse(BaseModel):
+    """Response after like/unlike action"""
+    success: bool
+    message: str
+    is_liked: bool  # current state after action
+
+
+class LikesListResponse(BaseModel):
+    """Response containing user's liked videos"""
+    videos: list[VideoResponse]
+    total: int
