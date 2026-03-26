@@ -106,17 +106,39 @@ async def search_videos_semantic(
     match_count: int
 ) -> list[dict]:
     """
-    Search videos by semantic similarity using SQL query via REST API.
+    Search videos by semantic similarity using pgvector RPC.
 
-    Fallback: Uses trending videos ordered by views.
-    Full implementation would use pgvector with:
-    SELECT * FROM videos
-    WHERE country_code = {filter_country} (if provided)
-    ORDER BY embedding <-> query_embedding
-    LIMIT match_count
+    Calls the search_videos() RPC function in Supabase which:
+    1. Takes a 1024-dim query embedding (taste vector)
+    2. Computes cosine distance via pgvector <=> operator
+    3. Uses HNSW index for fast approximate nearest neighbor search
+    4. Returns results ordered by similarity descending
+    5. Optionally filters by country
+
+    Args:
+        query_embedding: 1024-dim taste vector from user's watch history
+        filter_country: Optional country code filter (e.g., "US", "GB")
+        match_count: Number of videos to return
+
+    Returns:
+        List of video dicts ordered by cosine similarity (best first)
+        If RPC fails, falls back to trending videos
     """
-    # Without pgvector RPC, return trending videos as fallback
-    return await get_trending_videos(filter_country, match_count, 200, [])
+    try:
+        # Call the search_videos RPC function
+        results = await call_rpc(
+            "search_videos",
+            {
+                "query_embedding": query_embedding,
+                "filter_country": filter_country,
+                "match_count": match_count
+            }
+        )
+        return results if results else []
+    except Exception as e:
+        # Fallback: if pgvector search fails, return trending videos
+        print(f"[WARNING] Semantic search failed: {e}. Falling back to trending videos.")
+        return await get_trending_videos(filter_country, match_count, 200, [])
 
 
 async def get_trending_videos(
@@ -126,38 +148,61 @@ async def get_trending_videos(
     exclude_ids: list[str]
 ) -> list[dict]:
     """
-    Fetch trending videos using SQL query via REST API.
+    Fetch trending videos using RPC function.
 
-    SQL equivalent:
-    SELECT * FROM videos
-    WHERE country_code = {filter_country} (if provided)
-    AND id NOT IN exclude_ids
-    ORDER BY views DESC
-    LIMIT match_count
+    Uses the get_trending() RPC which:
+    1. Sorts by velocity_score (not views) - trending metric
+    2. Takes top pool_size candidates
+    3. Randomly samples match_count from the pool
+    4. Excludes already-selected videos (exclude_ids)
+    5. This randomization prevents repetitive trending feeds
+
+    Args:
+        filter_country: Optional country code filter
+        match_count: Number of videos to return
+        pool_size: Size of trending pool to sample from
+        exclude_ids: Video IDs to exclude from results
+
+    Returns:
+        List of trending videos, randomly sampled
     """
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        params = {
-            "select": "*",
-            "order": "views.desc",  # SQL: ORDER BY views DESC
-            "limit": pool_size
-        }
-
-        if filter_country:
-            params["country_code"] = f"eq.{filter_country}"
-
-        response = await client.get(
-            f"{REST_URL}/videos",
-            headers=HEADERS,
-            params=params
+    try:
+        results = await call_rpc(
+            "get_trending",
+            {
+                "filter_country": filter_country,
+                "match_count": match_count,
+                "pool_size": pool_size,
+                "exclude_ids": exclude_ids if exclude_ids else []
+            }
         )
-        response.raise_for_status()
-        videos = response.json()
+        return results if results else []
+    except Exception as e:
+        # Fallback: query trending directly via REST API
+        print(f"[WARNING] Trending RPC failed: {e}. Falling back to direct query.")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            params = {
+                "select": "*",
+                "order": "velocity_score.desc",
+                "limit": pool_size
+            }
 
-        # Filter out excluded videos (SQL: WHERE id NOT IN (...))
-        filtered = [v for v in videos if v["id"] not in exclude_ids]
+            if filter_country:
+                params["country_code"] = f"eq.{filter_country}"
 
-        # Return up to match_count videos
-        return filtered[:match_count]
+            response = await client.get(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params=params
+            )
+            response.raise_for_status()
+            videos = response.json()
+
+            # Filter out excluded videos
+            filtered = [v for v in videos if v["id"] not in exclude_ids]
+
+            # Return up to match_count videos
+            return filtered[:match_count]
 
 
 async def get_videos_by_uuids(uuids: list[str]) -> list[dict]:

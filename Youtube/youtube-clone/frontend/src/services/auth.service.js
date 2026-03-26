@@ -6,31 +6,31 @@ import { apiService } from './api.service';
 import { API_ENDPOINTS } from '../config';
 
 export const authService = {
-  async getProfile(token) {
-    const response = await apiService.withAuth(token).get(API_ENDPOINTS.AUTH_PROFILE);
-    if (!response.ok) {
-      throw new Error('Failed to fetch profile');
-    }
-    return response.json();
-  },
+    async getProfile(token) {
+        const response = await apiService.withAuth(token).get(API_ENDPOINTS.AUTH_PROFILE);
+        if (!response.ok) {
+            throw new Error('Failed to fetch profile');
+        }
+        return response.json();
+    },
 
-  async updateProfile(token, updates) {
-    const response = await apiService.withAuth(token).put(API_ENDPOINTS.AUTH_PROFILE, updates);
-    if (!response.ok) {
-      throw new Error('Failed to update profile');
-    }
-    return response.json();
-  },
+    async updateProfile(token, updates) {
+        const response = await apiService.withAuth(token).put(API_ENDPOINTS.AUTH_PROFILE, updates);
+        if (!response.ok) {
+            throw new Error('Failed to update profile');
+        }
+        return response.json();
+    },
 
-  async logout(token) {
-    const response = await apiService.withAuth(token).post(API_ENDPOINTS.AUTH_LOGOUT, {});
-    return response.json();
-  },
+    async logout(token) {
+        const response = await apiService.withAuth(token).post(API_ENDPOINTS.AUTH_LOGOUT, {});
+        return response.json();
+    },
 
-  async logoutAll(token) {
-    const response = await apiService.withAuth(token).post(API_ENDPOINTS.AUTH_LOGOUT_ALL, {});
-    return response.json();
-  },
+    async logoutAll(token) {
+        const response = await apiService.withAuth(token).post(API_ENDPOINTS.AUTH_LOGOUT_ALL, {});
+        return response.json();
+    },
 };
 
 export default authService;

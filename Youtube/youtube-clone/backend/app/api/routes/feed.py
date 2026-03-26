@@ -42,37 +42,57 @@ async def get_feed(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Authenticated user feed endpoint.
+    Authenticated user feed endpoint with personalization.
 
     Flow:
     1. Extract user_id from JWT
-    2. Query watch_history table
-    3. Determine phase based on count
-    4. Generate feed
-    5. Transform and return
+    2. Query watch_history table with full details (timestamps, duration)
+    3. Determine phase based on interaction count
+    4. Build weighted taste vector (recency + duration weighted)
+    5. Generate feed with phase-specific strategy
+    6. Transform and return
+
+    Personalization improves as watch history grows:
+    - Phase 1 (0 interactions): 50/50 global/local trending
+    - Phase 2 (1-4 interactions): Increasing semantic search (20-40%)
+    - Phase 3 (5+ interactions): Adaptive buckets (60-75% semantic same-region)
     """
     user_id = current_user["id"]
 
-    # Fetch watch history (contains video UUIDs)
-    history_rows = await get_watch_history(user_id, limit=50)
+    # Fetch watch history with full details (timestamps, duration)
+    history_rows = await get_watch_history(user_id, limit=100)
     watched_uuids = [row["video_id"] for row in history_rows]  # videos.id UUIDs
 
     interaction_count = len(watched_uuids)
 
-    # Determine phase
+    # Determine phase and generate feed
     if interaction_count == 0:
         strategy = "phase_1_cold_start"
         videos = await generate_phase1_feed(region, limit)
 
     elif 1 <= interaction_count <= 4:
         strategy = "phase_2_warm_up"
-        taste = await build_taste_vector_from_uuids(watched_uuids)
-        videos = await generate_phase2_feed(taste, region, limit) if taste is not None else await generate_phase1_feed(region, limit)
+        # Build taste vector with recency weighting
+        taste = await build_taste_vector_from_uuids(
+            watched_uuids,
+            watch_history=history_rows,
+            use_recency_weighting=True
+        )
+        videos = await generate_phase2_feed(
+            taste, region, interaction_count, limit
+        ) if taste is not None else await generate_phase1_feed(region, limit)
 
-    else:
+    else:  # 5+ interactions
         strategy = "phase_3_personalized"
-        taste = await build_taste_vector_from_uuids(watched_uuids)
-        videos = await generate_phase3_feed(taste, region, limit) if taste is not None else await generate_phase1_feed(region, limit)
+        # Build taste vector with recency weighting
+        taste = await build_taste_vector_from_uuids(
+            watched_uuids,
+            watch_history=history_rows,
+            use_recency_weighting=True
+        )
+        videos = await generate_phase3_feed(
+            taste, region, interaction_count, limit
+        ) if taste is not None else await generate_phase1_feed(region, limit)
 
     video_responses = [transform_video(v) for v in videos]
 
