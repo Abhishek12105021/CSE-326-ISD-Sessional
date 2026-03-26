@@ -1,5 +1,6 @@
 import numpy as np
 import random
+import time
 from typing import Optional
 from datetime import datetime, timedelta
 from app.db import (
@@ -7,13 +8,204 @@ from app.db import (
     search_videos_semantic,
     get_trending_videos,
     get_all_country_embeddings,
-    get_watch_history
+    get_watch_history,
+    get_user_liked_videos_with_timestamps
 )
 
 # Simple in-memory cache for country affinity (per session)
 _COUNTRY_AFFINITY_CACHE = {}
 _CACHE_TIMESTAMP = None
 _CACHE_TTL_SECONDS = 3600  # 1 hour
+
+# Weight multiplier for liked videos (explicit positive signal)
+LIKE_WEIGHT_MULTIPLIER = 2.0
+
+# Decay constant: 7 days (in seconds)
+# Videos from 7 days ago get ~0.37 weight of today
+DECAY_SECONDS = 7 * 24 * 3600
+
+
+def _compute_time_decay(timestamp_str: Optional[str], now: datetime) -> float:
+    """
+    Compute exponential time decay weight from timestamp.
+
+    Formula: exp(-age_seconds / DECAY_SECONDS)
+    - 7 days ago -> ~0.37 weight
+    - 14 days ago -> ~0.14 weight
+    - 30 days ago -> ~0.01 weight
+
+    Args:
+        timestamp_str: ISO format timestamp string
+        now: Current datetime for age calculation
+
+    Returns:
+        Decay weight between 0 and 1
+    """
+    if not timestamp_str:
+        return 1.0
+
+    try:
+        ts = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+        # Handle timezone-aware vs naive datetime
+        if ts.tzinfo is not None:
+            ts = ts.replace(tzinfo=None)
+        age_seconds = max(0, (now - ts).total_seconds())
+        return float(np.exp(-age_seconds / DECAY_SECONDS))
+    except Exception:
+        return 1.0
+
+
+async def build_taste_vector_for_authenticated_user(
+    user_id: str
+) -> tuple[Optional[np.ndarray], int]:
+    """
+    Build taste vector for authenticated users by fetching all signals from DB.
+
+    Unlike build_taste_vector_from_uuids(), this function:
+    1. Does NOT take a list of video UUIDs as input
+    2. Fetches ALL watch history from DB
+    3. Fetches ALL liked videos from DB with timestamps
+    4. Applies time-decay to both signals
+    5. Applies LIKE_WEIGHT_MULTIPLIER (2.0x) to liked videos
+    6. Combines into a single weighted taste vector
+
+    Liked videos are given higher weight because they represent explicit
+    positive signals, while watch history may include videos the user
+    didn't enjoy.
+
+    Args:
+        user_id: Authenticated user's UUID
+
+    Returns:
+        Tuple of:
+        - taste_vector: (1024,) normalized numpy array, or None if no data
+        - interaction_count: Total unique video interactions (for phase determination)
+    """
+    total_start = time.time()
+    print(f"\n{'='*60}")
+    print(f"[TASTE VECTOR] Building taste vector for user {user_id[:8]}...")
+    print(f"{'='*60}")
+
+    # Step 1: Fetch all watch history
+    step_start = time.time()
+    watch_history = await get_watch_history(user_id, limit=1000)
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[Step 1/5] Fetched watch history: {len(watch_history)} entries ({step_elapsed:.1f}ms)")
+
+    # Step 2: Fetch all liked videos with timestamps
+    step_start = time.time()
+    liked_videos = await get_user_liked_videos_with_timestamps(user_id, limit=500)
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[Step 2/5] Fetched liked videos: {len(liked_videos)} entries ({step_elapsed:.1f}ms)")
+
+    # Step 3: Build unified video weight map
+    step_start = time.time()
+    video_weights: dict[str, float] = {}
+    now = datetime.utcnow()
+
+    # Process watch history
+    max_duration = 1
+    if watch_history:
+        max_duration = max(
+            max_duration,
+            max(h.get("watch_duration_seconds", 0) for h in watch_history)
+        )
+
+    for entry in watch_history:
+        video_id = entry["video_id"]
+        started_at = entry.get("started_at")
+        duration = entry.get("watch_duration_seconds", 0)
+
+        # Compute time decay
+        time_decay = _compute_time_decay(started_at, now)
+
+        # Compute duration boost (sqrt normalization)
+        duration_boost = np.sqrt(max(duration / max(max_duration, 1), 0.1))
+
+        # Base weight for watched videos
+        weight = time_decay * (1.0 + duration_boost)
+
+        # Keep max weight if video appears multiple times
+        video_weights[video_id] = max(video_weights.get(video_id, 0), weight)
+
+    watched_count = len(video_weights)
+
+    # Process liked videos (with multiplier)
+    liked_added = 0
+    for entry in liked_videos:
+        video_id = entry["video_id"]
+        liked_at = entry.get("liked_at")
+
+        # Compute time decay
+        time_decay = _compute_time_decay(liked_at, now)
+
+        # Apply LIKE_WEIGHT_MULTIPLIER
+        like_weight = time_decay * LIKE_WEIGHT_MULTIPLIER
+
+        # If video was both watched AND liked, take the HIGHER weight
+        # (liked weight is almost always higher due to multiplier)
+        current_weight = video_weights.get(video_id, 0)
+        if video_id not in video_weights:
+            liked_added += 1
+        video_weights[video_id] = max(current_weight, like_weight)
+
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[Step 3/5] Computed weights: {len(video_weights)} unique videos "
+          f"(watched: {watched_count}, liked-only: {liked_added}, multiplier: {LIKE_WEIGHT_MULTIPLIER}x) ({step_elapsed:.1f}ms)")
+
+    if not video_weights:
+        total_elapsed = (time.time() - total_start) * 1000
+        print(f"[TASTE VECTOR] No interactions found. Total: {total_elapsed:.1f}ms")
+        print(f"{'='*60}\n")
+        return None, 0
+
+    # Step 4: Fetch embeddings for all videos
+    step_start = time.time()
+    video_ids = list(video_weights.keys())
+    video_rows = await get_videos_by_uuids(video_ids)
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[Step 4/5] Fetched embeddings: {len(video_rows)}/{len(video_ids)} videos ({step_elapsed:.1f}ms)")
+
+    if not video_rows:
+        total_elapsed = (time.time() - total_start) * 1000
+        print(f"[TASTE VECTOR] No embeddings found. Total: {total_elapsed:.1f}ms")
+        print(f"{'='*60}\n")
+        return None, len(video_weights)
+
+    # Step 5: Build weighted average
+    step_start = time.time()
+    vectors = []
+    weights = []
+
+    for row in video_rows:
+        video_id = row["id"]
+        if row.get("embedding") and video_id in video_weights:
+            vectors.append(row["embedding"])
+            weights.append(video_weights[video_id])
+
+    if not vectors:
+        total_elapsed = (time.time() - total_start) * 1000
+        print(f"[TASTE VECTOR] No valid embeddings. Total: {total_elapsed:.1f}ms")
+        print(f"{'='*60}\n")
+        return None, len(video_weights)
+
+    vectors_arr = np.array(vectors, dtype=np.float32)
+    weights_arr = np.array(weights, dtype=np.float32)
+    weights_arr = weights_arr / weights_arr.sum()  # Normalize
+
+    # Weighted average: (N, 1024).T @ (N,) -> (1024,)
+    taste = (vectors_arr.T @ weights_arr).astype(np.float32)
+    taste = taste / np.linalg.norm(taste)  # Unit normalize
+
+    interaction_count = len(video_weights)
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[Step 5/5] Built taste vector: shape={taste.shape}, norm={np.linalg.norm(taste):.4f} ({step_elapsed:.1f}ms)")
+
+    total_elapsed = (time.time() - total_start) * 1000
+    print(f"[TASTE VECTOR] Complete! Interactions: {interaction_count}, Total: {total_elapsed:.1f}ms")
+    print(f"{'='*60}\n")
+
+    return taste, interaction_count
 
 
 async def build_taste_vector_from_uuids(
@@ -206,7 +398,7 @@ async def compute_country_affinity(
 
 async def generate_phase1_feed(
     user_region: str,
-    watched_video_ids: list[str] = None,
+    watched_video_ids: list[str] = [],
     total: int = 30
 ) -> list[dict]:
     """
@@ -222,12 +414,15 @@ async def generate_phase1_feed(
     n_global = total // 2
     n_local = total - n_global
 
+    print(f"[PHASE 1] Cold Start | Bucket allocation → Global: {n_global} | Local ({user_region}): {n_local}")
+
     global_trending = await get_trending_videos(
         filter_country=None,
         match_count=n_global,
         pool_size=60,
         exclude_ids=[]
     )
+    print(f"[BUCKET GLOBAL] Trending (global) → {len(global_trending)} videos")
 
     used_ids = [v["id"] for v in global_trending]  # use "id" (UUID) not "video_id"
     local_trending = await get_trending_videos(
@@ -236,6 +431,7 @@ async def generate_phase1_feed(
         pool_size=30,
         exclude_ids=used_ids
     )
+    print(f"[BUCKET LOCAL] Trending ({user_region}) → {len(local_trending)} videos")
 
     all_videos = global_trending + local_trending
     random.shuffle(all_videos)
@@ -263,13 +459,36 @@ async def generate_phase1_feed(
                 final.append(v)
         deduped = final
 
-    return deduped[:total]
+    final_videos = deduped[:total]
+
+    # Log catalog
+    print(f"\n[PHASE 1 CATALOG]")
+    print(f"{'='*80}")
+    print(f"Global Trending — {len([v for v in final_videos if v['id'] in {x['id'] for x in global_trending}])} videos")
+    for i, v in enumerate([v for v in final_videos if v['id'] in {x['id'] for x in global_trending}], 1):
+        title = v.get("title", "Unknown")[:50]
+        channel = v.get("channel_title", "Unknown")[:25]
+        country = v.get("country_code", "??")
+        velocity = v.get("velocity_score", 0)
+        print(f"  {i:2d}. {title:50s} | {channel:25s} | {country} | velocity: {velocity:.2f}")
+
+    print(f"\nLocal Trending ({user_region}) — {len([v for v in final_videos if v['id'] in {x['id'] for x in local_trending}])} videos")
+    for i, v in enumerate([v for v in final_videos if v['id'] in {x['id'] for x in local_trending}], 1):
+        title = v.get("title", "Unknown")[:50]
+        channel = v.get("channel_title", "Unknown")[:25]
+        velocity = v.get("velocity_score", 0)
+        print(f"  {i:2d}. {title:50s} | {channel:25s} | velocity: {velocity:.2f}")
+
+    print(f"{'='*80}")
+    print(f"Total videos returned: {len(final_videos)}\n")
+
+    return final_videos
 
 
 async def generate_phase2_feed(
     taste_vector: np.ndarray,
     user_region: str,
-    watched_video_ids: list[str] = None,
+    watched_video_ids: list[str] = [],
     interaction_count: int = 0,
     total: int = 30
 ) -> list[dict]:
@@ -290,16 +509,21 @@ async def generate_phase2_feed(
         n_vector = round(total * 0.2)
         n_trending = round(total * 0.5)
         n_local = total - n_vector - n_trending
+        phase_label = "Early Warm-Up (1-2 interactions)"
     else:  # 3-4
         n_vector = round(total * 0.4)
         n_trending = round(total * 0.35)
         n_local = total - n_vector - n_trending
+        phase_label = "Strong Warm-Up (3-4 interactions)"
+
+    print(f"[PHASE 2] {phase_label} | Bucket allocation → Semantic: {n_vector} | Global Trending: {n_trending} | Local ({user_region}): {n_local}")
 
     vector_results = await search_videos_semantic(
         query_embedding=taste_vector.tolist(),
         filter_country=None,  # global for diversity
         match_count=n_vector
     )
+    print(f"[BUCKET SEMANTIC] Semantic search (global) → {len(vector_results)} videos")
     used_ids = {v["id"] for v in vector_results}
 
     trending = await get_trending_videos(
@@ -308,6 +532,7 @@ async def generate_phase2_feed(
         pool_size=60,
         exclude_ids=list(used_ids)
     )
+    print(f"[BUCKET TRENDING] Trending (global) → {len(trending)} videos")
     used_ids.update(v["id"] for v in trending)
 
     local = await get_trending_videos(
@@ -316,6 +541,7 @@ async def generate_phase2_feed(
         pool_size=30,
         exclude_ids=list(used_ids)
     )
+    print(f"[BUCKET LOCAL] Trending ({user_region}) → {len(local)} videos")
 
     all_videos = vector_results + trending + local
 
@@ -342,13 +568,49 @@ async def generate_phase2_feed(
                 final.append(v)
         deduped = final
 
-    return deduped[:total]
+    final_videos = deduped[:total]
+
+    # Log catalog
+    vector_final = [v for v in final_videos if v["id"] in {x["id"] for x in vector_results}]
+    trending_final = [v for v in final_videos if v["id"] in {x["id"] for x in trending}]
+    local_final = [v for v in final_videos if v["id"] in {x["id"] for x in local}]
+
+    print(f"\n[PHASE 2 CATALOG]")
+    print(f"{'='*80}")
+    if vector_final:
+        print(f"Semantic Search (global) — {len(vector_final)} videos")
+        for i, v in enumerate(vector_final, 1):
+            title = v.get("title", "Unknown")[:50]
+            channel = v.get("channel_title", "Unknown")[:25]
+            country = v.get("country_code", "??")
+            print(f"  {i:2d}. {title:50s} | {channel:25s} | {country}")
+
+    if trending_final:
+        print(f"\nGlobal Trending — {len(trending_final)} videos")
+        for i, v in enumerate(trending_final, 1):
+            title = v.get("title", "Unknown")[:50]
+            channel = v.get("channel_title", "Unknown")[:25]
+            velocity = v.get("velocity_score", 0)
+            print(f"  {i:2d}. {title:50s} | {channel:25s} | velocity: {velocity:.2f}")
+
+    if local_final:
+        print(f"\nLocal Trending ({user_region}) — {len(local_final)} videos")
+        for i, v in enumerate(local_final, 1):
+            title = v.get("title", "Unknown")[:50]
+            channel = v.get("channel_title", "Unknown")[:25]
+            velocity = v.get("velocity_score", 0)
+            print(f"  {i:2d}. {title:50s} | {channel:25s} | velocity: {velocity:.2f}")
+
+    print(f"{'='*80}")
+    print(f"Total videos returned: {len(final_videos)}\n")
+
+    return final_videos
 
 
 async def generate_phase3_feed(
     taste_vector: np.ndarray,
     user_region: str,
-    watched_video_ids: list[str] = None,
+    watched_video_ids: list[str] = [],
     interaction_count: int = 5,
     total: int = 30
 ) -> list[dict]:
@@ -385,16 +647,22 @@ async def generate_phase3_feed(
         N_A = round(total * 0.60)
         N_B = round(total * 0.20)
         N_C = round(total * 0.10)
+        phase_label = "Early Personalization"
     elif interaction_count < 20:
         N_A = round(total * 0.70)
         N_B = round(total * 0.15)
         N_C = round(total * 0.10)
+        phase_label = "Strong Personalization"
     else:  # 20+
         N_A = round(total * 0.75)
         N_B = round(total * 0.15)
         N_C = round(total * 0.07)
+        phase_label = "Heavy Personalization"
 
     N_D = total - N_A - N_B - N_C
+
+    # Log bucket allocation
+    print(f"[PHASE 3] {phase_label} | Bucket allocation → A: {N_A} | B: {N_B} | C: {N_C} | D: {N_D} | Total: {total}")
 
     # ===========================================
     # BUCKET A: Semantic / Same Region (60-75%)
@@ -405,6 +673,7 @@ async def generate_phase3_feed(
         match_count=N_A
     )
     used_ids = {v["id"] for v in bucket_a}
+    print(f"[BUCKET A] Semantic / Same Region ({user_region}) → {len(bucket_a)} videos")
 
     # ===========================================
     # BUCKET B: Semantic / Mixed Foreign (15-20%)
@@ -413,6 +682,7 @@ async def generate_phase3_feed(
     foreign = [c for c in all_foreign if c != user_region]
 
     bucket_b = []
+    country_affinity = {}
 
     # For early personalization (5-9 interactions), use simple random distribution
     # to avoid expensive country affinity computation
@@ -426,9 +696,15 @@ async def generate_phase3_feed(
         leftover = N_B % n_countries
         for i in range(leftover):
             slots[chosen[i]] += 1
+
+        print(f"[BUCKET B] Semantic / Mixed Foreign (early, random) → {len(chosen)} countries: {list(slots.keys())}")
     else:
         # For strong personalization (10+), compute affinity and use weighted distribution
         country_affinity = await compute_country_affinity(taste_vector, foreign)
+
+        # Log affinity scores
+        affinity_str = " | ".join(f"{cc}: {v:.4f}" for cc, v in sorted(country_affinity.items(), key=lambda x: -x[1]))
+        print(f"[BUCKET B] Country affinity scores: {affinity_str}")
 
         # Convert to probabilities
         affinity_vals = np.array([country_affinity[c] for c in foreign])
@@ -447,6 +723,8 @@ async def generate_phase3_feed(
             for cc in sorted_c[:leftover]:
                 slots[cc] += 1
 
+        print(f"[BUCKET B] Semantic / Mixed Foreign (strong/heavy) → Slot allocation: {slots}")
+
     # Fetch per country
     for country, n_slots in slots.items():
         results = await search_videos_semantic(
@@ -459,6 +737,8 @@ async def generate_phase3_feed(
                 bucket_b.append(v)
                 used_ids.add(v["id"])
 
+    print(f"[BUCKET B] Fetched {len(bucket_b)} videos from foreign countries")
+
     # ===========================================
     # BUCKET C: Trending / User Region (7-10%)
     # ===========================================
@@ -469,6 +749,7 @@ async def generate_phase3_feed(
         exclude_ids=list(used_ids)
     )
     used_ids.update(v["id"] for v in bucket_c)
+    print(f"[BUCKET C] Trending / User Region ({user_region}) → {len(bucket_c)} videos")
 
     # ===========================================
     # BUCKET D: Trending / Global Mix (3-10%)
@@ -479,6 +760,7 @@ async def generate_phase3_feed(
         pool_size=80,
         exclude_ids=list(used_ids)
     )
+    print(f"[BUCKET D] Trending / Global Mix → {len(bucket_d)} videos")
 
     all_videos = bucket_a + bucket_b + bucket_c + bucket_d
 
@@ -505,4 +787,60 @@ async def generate_phase3_feed(
                 final.append(v)
         deduped = final
 
-    return deduped[:total]
+    # Log final results
+    final_videos = deduped[:total]
+
+    # Count countries in final results
+    bucket_a_final = [v for v in final_videos if v["id"] in {x["id"] for x in bucket_a}]
+    bucket_b_final = [v for v in final_videos if v["id"] in {x["id"] for x in bucket_b}]
+    bucket_c_final = [v for v in final_videos if v["id"] in {x["id"] for x in bucket_c}]
+    bucket_d_final = [v for v in final_videos if v["id"] in {x["id"] for x in bucket_d}]
+
+    print(f"\n[PHASE 3 CATALOG]")
+    print(f"{'='*80}")
+    print(f"Bucket A: Semantic / Same Region ({user_region}) — {len(bucket_a_final)} videos")
+    for i, v in enumerate(bucket_a_final, 1):
+        title = v.get("title", "Unknown")[:50]
+        channel = v.get("channel_title", "Unknown")[:25]
+        country = v.get("country_code", "??")
+        print(f"  {i:2d}. {title:50s} | {channel:25s} | {country}")
+
+    if bucket_b_final:
+        print(f"\nBucket B: Semantic / Mixed Foreign — {len(bucket_b_final)} videos")
+        country_mix_b = {}
+        for v in bucket_b_final:
+            cc = v.get("country_code", "??")
+            country_mix_b[cc] = country_mix_b.get(cc, 0) + 1
+        print(f"  Country mix: {country_mix_b}")
+        for i, v in enumerate(bucket_b_final, 1):
+            title = v.get("title", "Unknown")[:50]
+            channel = v.get("channel_title", "Unknown")[:25]
+            country = v.get("country_code", "??")
+            print(f"  {i:2d}. {title:50s} | {channel:25s} | {country}")
+
+    if bucket_c_final:
+        print(f"\nBucket C: Trending / User Region ({user_region}) — {len(bucket_c_final)} videos")
+        for i, v in enumerate(bucket_c_final, 1):
+            title = v.get("title", "Unknown")[:50]
+            channel = v.get("channel_title", "Unknown")[:25]
+            velocity = v.get("velocity_score", 0)
+            print(f"  {i:2d}. {title:50s} | {channel:25s} | velocity: {velocity:.2f}")
+
+    if bucket_d_final:
+        print(f"\nBucket D: Trending / Global Mix — {len(bucket_d_final)} videos")
+        country_mix_d = {}
+        for v in bucket_d_final:
+            cc = v.get("country_code", "??")
+            country_mix_d[cc] = country_mix_d.get(cc, 0) + 1
+        print(f"  Country mix: {country_mix_d}")
+        for i, v in enumerate(bucket_d_final, 1):
+            title = v.get("title", "Unknown")[:50]
+            channel = v.get("channel_title", "Unknown")[:25]
+            country = v.get("country_code", "??")
+            velocity = v.get("velocity_score", 0)
+            print(f"  {i:2d}. {title:50s} | {channel:25s} | {country} | velocity: {velocity:.2f}")
+
+    print(f"{'='*80}")
+    print(f"Total videos returned: {len(final_videos)}\n")
+
+    return final_videos

@@ -744,6 +744,39 @@ async def get_user_liked_videos(user_id: str, limit: int = 100) -> list[dict]:
         return await get_videos_by_uuids(video_ids)
 
 
+async def get_user_liked_videos_with_timestamps(user_id: str, limit: int = 500) -> list[dict]:
+    """
+    Fetch liked videos WITH liked_at timestamps for recommendation weighting.
+
+    SQL equivalent:
+    SELECT video_id, liked_at FROM liked_videos
+    WHERE user_id = {user_id}
+    ORDER BY liked_at DESC
+    LIMIT {limit}
+
+    Returns: [
+        {"video_id": "uuid-...", "liked_at": "2026-03-25T10:30:00+00:00"},
+        ...
+    ]
+
+    Note: Returns raw liked_videos rows with timestamps, NOT joined video data.
+    Embeddings are fetched separately via get_videos_by_uuids().
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{REST_URL}/liked_videos",
+            headers=HEADERS,
+            params={
+                "select": "video_id,liked_at",
+                "user_id": f"eq.{user_id}",
+                "order": "liked_at.desc",
+                "limit": limit
+            }
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 async def add_like(user_id: str, video_id: str) -> bool:
     """
     Add a like for a video and increment video's like count.

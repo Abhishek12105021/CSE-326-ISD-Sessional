@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from typing import Optional
+import time
 from app.api.deps import get_current_user
 from app.db import get_user_by_id
 from app.schemas.feed import (
@@ -12,6 +13,7 @@ from app.schemas.feed import (
 )
 from app.core.recommendation import (
     build_taste_vector_from_uuids,
+    build_taste_vector_for_authenticated_user,
     generate_phase1_feed,
     generate_phase2_feed,
     generate_phase3_feed
@@ -22,7 +24,8 @@ from app.db import (
     get_user_disliked_videos, add_dislike, remove_dislike, is_video_disliked,
     get_all_channels, get_user_subscribed_channels, subscribe, unsubscribe, is_subscribed,
     insert_watch_history, update_watch_history, delete_watch_history, get_watch_record_by_id,
-    increment_video_views, decrement_video_views
+    increment_video_views, decrement_video_views,
+    get_user_liked_videos_with_timestamps
 )
 from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
 
@@ -57,16 +60,17 @@ async def get_feed(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Authenticated user feed endpoint with advanced personalization.
+    Authenticated user feed endpoint with enhanced personalization.
 
     Features:
-    1. Fetches user's watch history with recency & duration weighting
-    2. Auto-determines personalization phase (Cold Start → Warm-Up → Personalized)
-    3. Adaptive bucket allocation based on interaction count
-    4. Deduplication: No video appears more than once
-    5. Watch history filter: Max 10% of recommendations from watched videos
-    6. User region preference: Falls back to provided region if not set
-    7. Semantic search + trending mix for diversity
+    1. Fetches ALL watch history and liked videos with time-decay weighting
+    2. Liked videos receive 2x weight multiplier (explicit positive signal)
+    3. Auto-determines personalization phase (Cold Start → Warm-Up → Personalized)
+    4. Adaptive bucket allocation based on interaction count
+    5. Deduplication: No video appears more than once
+    6. Watch history filter: Max 10% of recommendations from watched videos
+    7. User region preference: Falls back to provided region if not set
+    8. Semantic search + trending mix for diversity
 
     Personalization Phases:
     - Phase 1 (0 interactions): 50/50 global/local trending
@@ -81,54 +85,75 @@ async def get_feed(
     Returns:
         FeedResponse with videos, strategy, interaction count, and total
     """
+    total_start = time.time()
     user_id = current_user["id"]
 
-    # Fetch user profile for region preference
+    print(f"\n{'#'*70}")
+    print(f"[FEED GENERATION] Starting for user {user_id[:8]}...")
+    print(f"{'#'*70}")
+
+    # Step 1: Fetch user profile for region preference
+    step_start = time.time()
     db_user = await get_user_by_id(user_id)
     user_region = region or (db_user.get("region") if db_user else None) or "US"
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[FEED Step 1/4] Fetched user profile, region={user_region} ({step_elapsed:.1f}ms)")
 
-    # Fetch user's watch history with timestamps and duration
+    # Step 2: Build taste vector from DB (fetches watch history + liked videos internally)
+    step_start = time.time()
+    try:
+        taste, interaction_count = await build_taste_vector_for_authenticated_user(user_id)
+    except Exception as e:
+        print(f"[WARNING] Failed to build taste vector for user {user_id}: {e}")
+        taste = None
+        interaction_count = 0
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[FEED Step 2/4] Built taste vector: interactions={interaction_count}, "
+          f"has_taste={taste is not None} ({step_elapsed:.1f}ms)")
+
+    # Step 3: Fetch watched UUIDs for deduplication/filtering
+    step_start = time.time()
     try:
         history_rows = await get_watch_history(user_id, limit=100)
-        watched_uuids = [row["video_id"] for row in history_rows]  # videos.id UUIDs
+        watched_uuids = [row["video_id"] for row in history_rows]
     except Exception as e:
-        print(f"[WARNING] Failed to fetch watch history for user {user_id}: {e}")
-        history_rows = []
+        print(f"[WARNING] Failed to fetch watch history for dedup: {e}")
         watched_uuids = []
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[FEED Step 3/4] Fetched dedup list: {len(watched_uuids)} watched UUIDs ({step_elapsed:.1f}ms)")
 
-    interaction_count = len(watched_uuids)
-
-    # Determine phase and generate feed with fully applied filters
+    # Step 4: Determine phase and generate feed with fully applied filters
+    step_start = time.time()
     if interaction_count == 0:
         strategy = "phase_1_cold_start"
+        print(f"[FEED Step 4/4] Phase 1 (Cold Start): Generating trending feed...")
         videos = await generate_phase1_feed(user_region, watched_uuids, limit)
 
     elif 1 <= interaction_count <= 4:
         strategy = "phase_2_warm_up"
-        # Build taste vector with recency + duration weighting
-        taste = await build_taste_vector_from_uuids(
-            watched_uuids,
-            watch_history=history_rows,
-            use_recency_weighting=True
-        )
+        print(f"[FEED Step 4/4] Phase 2 (Warm-Up): Generating mixed feed...")
         videos = await generate_phase2_feed(
             taste, user_region, watched_uuids, interaction_count, limit
         ) if taste is not None else await generate_phase1_feed(user_region, watched_uuids, limit)
 
     else:  # 5+ interactions - Fully personalized
         strategy = "phase_3_personalized"
-        # Build taste vector with recency + duration weighting
-        taste = await build_taste_vector_from_uuids(
-            watched_uuids,
-            watch_history=history_rows,
-            use_recency_weighting=True
-        )
+        print(f"[FEED Step 4/4] Phase 3 (Personalized): Generating semantic feed...")
         videos = await generate_phase3_feed(
             taste, user_region, watched_uuids, interaction_count, limit
         ) if taste is not None else await generate_phase1_feed(user_region, watched_uuids, limit)
 
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[FEED Step 4/4] Generated {len(videos)} videos using {strategy} ({step_elapsed:.1f}ms)")
+
     # Transform to response format
     video_responses = [transform_video(v) for v in videos]
+
+    total_elapsed = (time.time() - total_start) * 1000
+    print(f"{'#'*70}")
+    print(f"[FEED GENERATION] Complete! Strategy: {strategy}, "
+          f"Videos: {len(video_responses)}, Total: {total_elapsed:.1f}ms")
+    print(f"{'#'*70}\n")
 
     return FeedResponse(
         videos=video_responses,
@@ -177,18 +202,25 @@ async def debug_personalization(current_user: dict = Depends(get_current_user)):
     DEBUG ENDPOINT: Return personalization state for authenticated user.
 
     Shows:
-    - Interaction count (watch history size)
+    - Watch history count and liked videos count
+    - Combined interaction count (unique videos)
     - Current phase (Cold Start, Warm-Up, Personalized)
     - Which bucket allocation will be used
     - Region preference
+    - Like weight multiplier (2.0x)
     """
     user_id = current_user["id"]
 
-    # Fetch user profile and watch history
+    # Fetch user profile, watch history, and liked videos
     db_user = await get_user_by_id(user_id)
     history_rows = await get_watch_history(user_id, limit=100)
-    interaction_count = len(history_rows)
+    liked_videos = await get_user_liked_videos_with_timestamps(user_id, limit=50)
     user_region = db_user.get("region") if db_user else "US"
+
+    # Calculate combined interaction count (unique videos)
+    watched_ids = {row["video_id"] for row in history_rows}
+    liked_ids = {row["video_id"] for row in liked_videos}
+    interaction_count = len(watched_ids | liked_ids)
 
     # Determine phase
     if interaction_count == 0:
@@ -213,11 +245,13 @@ async def debug_personalization(current_user: dict = Depends(get_current_user)):
 
     return {
         "user_id": user_id,
-        "interaction_count": interaction_count,
+        "watch_history_count": len(history_rows),
+        "liked_videos_count": len(liked_videos),
+        "total_interaction_count": interaction_count,
         "phase": phase,
         "description": description,
         "region": user_region,
-        "watch_history_size": len(history_rows),
+        "like_weight_multiplier": 2.0,
         "recent_watches": [
             {
                 "video_id": row["video_id"],
@@ -225,6 +259,13 @@ async def debug_personalization(current_user: dict = Depends(get_current_user)):
                 "watched_at": row.get("started_at")
             }
             for row in history_rows[:5]
+        ],
+        "recent_likes": [
+            {
+                "video_id": row["video_id"],
+                "liked_at": row.get("liked_at")
+            }
+            for row in liked_videos[:5]
         ]
     }
 
