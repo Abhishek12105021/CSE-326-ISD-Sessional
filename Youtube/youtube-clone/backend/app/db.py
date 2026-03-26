@@ -271,6 +271,30 @@ async def get_watch_history(user_id: str, limit: int = 50) -> list[dict]:
         return response.json()
 
 
+async def get_watch_record_by_id(watch_id: str) -> Optional[dict]:
+    """
+    Fetch a specific watch history record by ID to get the video_id.
+    Used when deleting a watch record to decrement views.
+
+    SQL equivalent:
+    SELECT id, video_id FROM watch_history WHERE id = {watch_id}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{REST_URL}/watch_history",
+            headers=HEADERS,
+            params={
+                "select": "id,video_id",
+                "id": f"eq.{watch_id}"
+            }
+        )
+        response.raise_for_status()
+        data = response.json()
+        if data and len(data) > 0:
+            return data[0]
+        return None
+
+
 async def get_all_country_embeddings(country_code: str) -> list[list[float]]:
     """
     Fetch ALL embeddings for given country.
@@ -342,14 +366,13 @@ async def insert_watch_history(
             raise
 
 
-async def update_watch_history(watch_id: str, watch_duration_seconds: int, video_duration_seconds: Optional[int] = None) -> bool:
+async def update_watch_history(watch_id: str, watch_duration_seconds: int) -> bool:
     """
-    UPDATE watch_history with actual duration and calculate watch percentage.
+    UPDATE watch_history with actual duration.
 
     Args:
         watch_id: The watch record ID to update
         watch_duration_seconds: How long the user actually watched
-        video_duration_seconds: Total video length (for percentage calculation)
 
     Returns:
         True if successful, False otherwise
@@ -362,12 +385,8 @@ async def update_watch_history(watch_id: str, watch_duration_seconds: int, video
             "ended_at": datetime.utcnow().isoformat()
         }
 
-        # Calculate watch percentage if video duration is provided
-        if video_duration_seconds and video_duration_seconds > 0:
-            watch_percentage = min(100.0, (watch_duration_seconds / video_duration_seconds) * 100)
-            payload["watch_percentage"] = round(watch_percentage, 2)
-
         try:
+            print(f"[DEBUG] Updating watch_history - watch_id: {watch_id}, watch_duration_seconds: {watch_duration_seconds}")
             response = await client.patch(
                 f"{REST_URL}/watch_history",
                 headers=HEADERS,
@@ -375,9 +394,36 @@ async def update_watch_history(watch_id: str, watch_duration_seconds: int, video
                 json=payload
             )
             response.raise_for_status()
+            print(f"[DEBUG] Successfully updated watch_history")
             return True
         except Exception as e:
-            print(f"[ERROR] update_watch_history failed - watch_id: {watch_id}, payload: {payload}")
+            print(f"[ERROR] update_watch_history PATCH failed - watch_id: {watch_id}, payload: {payload}")
+            print(f"[ERROR] Response status: {response.status_code if 'response' in locals() else 'N/A'}")
+            print(f"[ERROR] Response text: {response.text if 'response' in locals() else 'N/A'}")
+            raise
+
+
+async def delete_watch_history(watch_id: str) -> bool:
+    """
+    DELETE watch_history record by ID.
+
+    Args:
+        watch_id: The watch record ID to delete
+
+    Returns:
+        True if successful, False otherwise
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            response = await client.delete(
+                f"{REST_URL}/watch_history",
+                headers=HEADERS,
+                params={"id": f"eq.{watch_id}"}
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            print(f"[ERROR] delete_watch_history failed - watch_id: {watch_id}")
             print(f"[ERROR] Response status: {response.status_code if 'response' in locals() else 'N/A'}")
             print(f"[ERROR] Response text: {response.text if 'response' in locals() else 'N/A'}")
             raise
@@ -400,6 +446,91 @@ async def get_unique_categories() -> list[str]:
         response.raise_for_status()
         rows = response.json()
         return sorted(set(row["category_name"] for row in rows if row.get("category_name")))
+
+
+# ======================== VIEW COUNT MANAGEMENT ========================
+
+
+async def increment_video_views(video_id: str) -> bool:
+    """
+    Increment the view count for a video.
+
+    SQL equivalent:
+    UPDATE videos SET views = views + 1 WHERE id = {video_id}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # First get current view count
+            response = await client.get(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={
+                    "select": "views",
+                    "id": f"eq.{video_id}"
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if not data or len(data) == 0:
+                return False
+
+            current_views = data[0]["views"] or 0
+            new_views = current_views + 1
+
+            # Update with new count
+            response = await client.patch(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={"id": f"eq.{video_id}"},
+                json={"views": new_views}
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            print(f"[ERROR] increment_video_views failed for video {video_id}: {e}")
+            return False
+
+
+async def decrement_video_views(video_id: str) -> bool:
+    """
+    Decrement the view count for a video (when watch history is deleted).
+
+    SQL equivalent:
+    UPDATE videos SET views = GREATEST(0, views - 1) WHERE id = {video_id}
+    """
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        try:
+            # First get current view count
+            response = await client.get(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={
+                    "select": "views",
+                    "id": f"eq.{video_id}"
+                }
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            if not data or len(data) == 0:
+                return False
+
+            current_views = data[0]["views"] or 0
+            new_views = max(0, current_views - 1)  # Don't go below 0
+
+            # Update with new count
+            response = await client.patch(
+                f"{REST_URL}/videos",
+                headers=HEADERS,
+                params={"id": f"eq.{video_id}"},
+                json={"views": new_views}
+            )
+            response.raise_for_status()
+            return True
+        except Exception as e:
+            print(f"[ERROR] decrement_video_views failed for video {video_id}: {e}")
+            return False
 
 
 # ======================== LIKES MANAGEMENT ========================

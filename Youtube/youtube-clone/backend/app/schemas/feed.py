@@ -42,13 +42,17 @@ class WatchEventRequest(BaseModel):
     video_uuid: str  # UUID from videos.id
     watch_id: Optional[str] = None  # present only on UPDATE call
     watch_duration_seconds: Optional[int] = None  # from YouTube iframe API, only on UPDATE
-    video_duration_seconds: Optional[int] = None  # total video length (for watch percentage)
     guest_uuid: Optional[str] = None  # for guests
 
 
 class WatchEventResponse(BaseModel):
     watch_id: Optional[str] = None  # only returned on INSERT
     success: bool = True
+
+
+class DeleteWatchHistoryRequest(BaseModel):
+    """Request to delete a watch history record"""
+    watch_id: str  # ID of the watch history record to delete
 
 
 class CategoriesResponse(BaseModel):

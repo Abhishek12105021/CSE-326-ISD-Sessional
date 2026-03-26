@@ -20,7 +20,7 @@ from app.core.recommendation import (
     generate_phase2_feed,
     generate_phase3_feed
 )
-from app.db import insert_watch_history, update_watch_history, get_unique_categories
+from app.db import insert_watch_history, update_watch_history, get_unique_categories, increment_video_views
 from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
 
 
@@ -164,6 +164,14 @@ async def record_guest_watch(request: WatchEventRequest):
             guest_uuid=request.guest_uuid,
             video_uuid=request.video_uuid
         )
+
+        # Increment video view count (guests can only increase, not decrease)
+        view_increment_success = await increment_video_views(request.video_uuid)
+        if view_increment_success:
+            print(f"[DEBUG] Incremented view count for video {request.video_uuid} (guest)")
+        else:
+            print(f"[WARNING] Failed to increment view count for video {request.video_uuid} (guest)")
+
         return WatchEventResponse(watch_id=watch_id, success=True)
 
     # MODE 2: UPDATE
@@ -171,7 +179,7 @@ async def record_guest_watch(request: WatchEventRequest):
         await update_watch_history(
             watch_id=request.watch_id,
             watch_duration_seconds=request.watch_duration_seconds or 0,
-            video_duration_seconds=request.video_duration_seconds
+            # video_duration_seconds=request.video_duration_seconds
         )
         return WatchEventResponse(watch_id=request.watch_id, success=True)
 

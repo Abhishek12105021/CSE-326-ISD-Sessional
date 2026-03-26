@@ -7,7 +7,8 @@ from app.schemas.feed import (
     LikeVideoRequest, LikeResponse, LikesListResponse,
     DislikeVideoRequest, DislikeResponse, DislikesListResponse,
     SubscribeRequest, SubscriptionResponse, SubscribedChannelsResponse, AllChannelsResponse,
-    WatchEventRequest, WatchEventResponse, VideoMetadataRequest, VideoMetadataResponse
+    WatchEventRequest, WatchEventResponse, VideoMetadataRequest, VideoMetadataResponse,
+    DeleteWatchHistoryRequest
 )
 from app.core.recommendation import (
     build_taste_vector_from_uuids,
@@ -20,7 +21,8 @@ from app.db import (
     get_user_liked_videos, add_like, remove_like, is_video_liked,
     get_user_disliked_videos, add_dislike, remove_dislike, is_video_disliked,
     get_all_channels, get_user_subscribed_channels, subscribe, unsubscribe, is_subscribed,
-    insert_watch_history, update_watch_history
+    insert_watch_history, update_watch_history, delete_watch_history, get_watch_record_by_id,
+    increment_video_views, decrement_video_views
 )
 from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
 
@@ -838,6 +840,13 @@ async def track_watch_event(
 
             print(f"[DEBUG] Created watch record with ID: {watch_id}")
 
+            # Increment video view count (only once per watch, on INSERT)
+            view_increment_success = await increment_video_views(video_uuid)
+            if view_increment_success:
+                print(f"[DEBUG] Incremented view count for video {video_uuid}")
+            else:
+                print(f"[WARNING] Failed to increment view count for video {video_uuid}")
+
             return WatchEventResponse(
                 watch_id=watch_id,
                 success=True
@@ -849,8 +858,7 @@ async def track_watch_event(
 
             success = await update_watch_history(
                 watch_id=request.watch_id,
-                watch_duration_seconds=request.watch_duration_seconds or 0,
-                video_duration_seconds=request.video_duration_seconds
+                watch_duration_seconds=request.watch_duration_seconds or 0
             )
 
             if not success:
@@ -933,10 +941,8 @@ async def get_user_watch_history(
                     "watch_id": history_row["id"],
                     "video": video_response,
                     "watch_duration_seconds": history_row.get("watch_duration_seconds", 0),
-                    "watch_percentage": float(history_row.get("watch_percentage", 0)) if history_row.get("watch_percentage") else 0.0,
                     "started_at": history_row.get("started_at"),
-                    "ended_at": history_row.get("ended_at"),
-                    "completed": history_row.get("watch_percentage", 0) >= 80 if history_row.get("watch_percentage") else False
+                    "ended_at": history_row.get("ended_at")
                 }
                 watch_history.append(watch_entry)
 
@@ -949,5 +955,77 @@ async def get_user_watch_history(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch watch history"
+        )
+
+
+@router.delete("/watch-history")
+async def delete_watch_history_record(
+    request: DeleteWatchHistoryRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Delete a watch history record by ID.
+
+    Features:
+    - Only authenticated users can delete their own watch history
+    - Deletes the record from watch_history table
+    - Returns success status
+
+    Args:
+        request: DeleteWatchHistoryRequest containing watch_id to delete
+        current_user: Authenticated user from JWT
+
+    Returns:
+        JSON response with success status
+    """
+    user_id = current_user["id"]
+    watch_id = request.watch_id
+
+    print(f"[DEBUG] delete_watch_history - user_id: {user_id}, watch_id: {watch_id}")
+
+    try:
+        # First, get the watch record to find the video_id
+        watch_record = await get_watch_record_by_id(watch_id)
+
+        if not watch_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Watch history record {watch_id} not found"
+            )
+
+        video_id = watch_record.get("video_id")
+        print(f"[DEBUG] Found watch record for video {video_id}")
+
+        # Delete the watch history record
+        success = await delete_watch_history(watch_id)
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete watch history record"
+            )
+
+        print(f"[DEBUG] Successfully deleted watch record {watch_id}")
+
+        # Decrement video view count (only for authenticated users, not guests)
+        view_decrement_success = await decrement_video_views(video_id)
+        if view_decrement_success:
+            print(f"[DEBUG] Decremented view count for video {video_id}")
+        else:
+            print(f"[WARNING] Failed to decrement view count for video {video_id}")
+
+        return {
+            "success": True,
+            "message": "Watch history record deleted successfully",
+            "watch_id": watch_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[ERROR] delete_watch_history failed - user_id: {user_id}, watch_id: {watch_id}, error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete watch history: {str(e)}"
         )
 
