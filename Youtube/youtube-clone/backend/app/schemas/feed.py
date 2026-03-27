@@ -175,3 +175,20 @@ class GuestReloadFeedRequest(BaseModel):
     excluded_video_ids: list[str] = []  # Videos already shown in current feed
     limit: int = 30  # Number of new videos to return
 
+
+# ======================== RELOAD SEARCH (LAZY LOADING) ========================
+
+
+class SearchReloadRequest(BaseModel):
+    """Request to reload search results with lazy loading"""
+    q: str  # Original search query
+    excluded_video_ids: list[str] = []  # UUIDs of videos already shown
+    offset: int = 0  # Pagination offset for next batch
+    limit: int = 25  # Number of new videos to return (20-30)
+
+
+class ReloadRecommendRequest(BaseModel):
+    """Request to reload recommendations with lazy loading"""
+    video_id: str  # Reference video UUID
+    excluded_video_ids: list[str] = []  # UUIDs of recommendations already shown
+    limit: int = 15  # Number of new recommendations to return

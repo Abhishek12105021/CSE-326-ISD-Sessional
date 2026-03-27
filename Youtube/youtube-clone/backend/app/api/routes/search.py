@@ -6,15 +6,17 @@ Leverages FAISS for fast similarity search on embedded queries and videos.
 Endpoints:
 - POST /search?q=query&limit=50  → Search by text query
 - POST /recommend?video_id=uuid&limit=15 → Find similar videos
+- POST /reload-search → Lazy load more search results with pagination
 """
 from fastapi import APIRouter, Query, HTTPException, status
 import numpy as np
 from uuid import UUID
 from typing import Optional
+import time
 
 from app.core import embedding_service, faiss_manager
 from app.db import get_videos_metadata_by_uuids
-from app.schemas.feed import VideoResponse, ChannelInfo
+from app.schemas.feed import VideoResponse, ChannelInfo, SearchReloadRequest, ReloadRecommendRequest
 from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
 
 router = APIRouter()
@@ -360,4 +362,364 @@ async def recommend_similar_videos(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Recommendation failed"
+        )
+
+
+@router.post("/reload-search")
+async def reload_search_results(request: SearchReloadRequest):
+    """
+    Lazy loading endpoint - reload search results with pagination.
+
+    This endpoint allows infinite scrolling of search results by returning
+    25 new videos that exclude all previously shown videos and maintain
+    the same hybrid ranking as the initial /search endpoint.
+
+    Features:
+    - Same hybrid ranking as /search (semantic + keywords + category)
+    - Excludes all videos in excluded_video_ids list
+    - Pagination using offset-based approach
+    - Returns 20-30 new videos per reload
+    - Maintains consistent result quality across reloads
+
+    Args:
+        request: SearchReloadRequest with:
+            - q: Original search query
+            - excluded_video_ids: Videos already shown
+            - offset: Pagination offset (for next batch)
+            - limit: Videos to return per reload (20-30)
+
+    Returns:
+        {
+            "videos": [VideoResponse, ...],
+            "query": "original query",
+            "total": number of new results,
+            "offset": offset used,
+            "has_more": bool if more results available
+        }
+    """
+    try:
+        query = request.q
+        excluded_ids = set(request.excluded_video_ids or [])
+        offset = request.offset
+        limit = min(request.limit, 50)  # Cap at 50 per reload
+
+        print(f"\n{'#'*70}")
+        print(f"[RELOAD-SEARCH] Query: '{query[:50]}...', offset={offset}, limit={limit}")
+        print(f"[RELOAD-SEARCH] Excluding {len(excluded_ids)} already-shown videos")
+        print(f"{'#'*70}")
+
+        # Step 1: Embed query
+        print(f"[RELOAD] Step 1: Embedding query...")
+        query_embedding = embedding_service.embed_query(query)
+
+        # Step 2: FAISS search (get much larger pool for pagination)
+        # Get results starting from offset position
+        faiss_k = min((offset + limit + 50), 400)  # Get enough for pagination + buffer
+        print(f"[RELOAD] Step 2: FAISS search for K={faiss_k}...")
+        faiss_results = faiss_manager.search_similar(query_embedding, k=faiss_k)
+
+        if not faiss_results:
+            return {
+                "videos": [],
+                "query": query,
+                "total": 0,
+                "offset": offset,
+                "has_more": False
+            }
+
+        # Step 3: Filter out excluded videos and apply offset
+        print(f"[RELOAD] Step 3: Filtering excluded videos and applying offset...")
+        filtered_results = [
+            (uuid_str, score) for uuid_str, score in faiss_results
+            if uuid_str not in excluded_ids
+        ]
+
+        # Get results from offset to offset+limit
+        paginated_results = filtered_results[offset:offset+limit]
+
+        if not paginated_results:
+            return {
+                "videos": [],
+                "query": query,
+                "total": 0,
+                "offset": offset
+            }
+
+        # Extract UUIDs
+        video_uuids = [uuid_str for uuid_str, _ in paginated_results]
+
+        # Step 4: Fetch metadata from DB
+        print(f"[RELOAD] Step 4: Fetching metadata for {len(video_uuids)} videos...")
+        videos_data = await get_videos_metadata_by_uuids(video_uuids)
+
+        # Create lookup dictionaries
+        uuid_to_faiss_score = {uuid_str: score for uuid_str, score in paginated_results}
+        uuid_to_video = {v["id"]: v for v in videos_data}
+
+        # Step 5: Apply same hybrid ranking as /search
+        print(f"[RELOAD] Step 5: Re-ranking with hybrid strategy...")
+
+        # Parse query keywords
+        query_words = query.lower().split()
+
+        # Define category keywords (same as /search)
+        category_keywords = {
+            "Sports": ["sport", "basketball", "football", "soccer", "nfl", "nba", "cricket", "tennis", "rugby", "boxing", "mma", "wrestling"],
+            "Music": ["music", "song", "album", "artist", "concert", "band", "kpop", "pop", "rock", "hiphop", "rap", "jazz", "classical", "remix", "acoustic"],
+            "People & Blogs": ["vlog", "blog", "vlogger", "content creator", "daily life", "personal", "lifestyle", "daily vlog"],
+            "Entertainment": ["show", "celebrity", "actor", "actress", "entertainment", "interview", "talk show", "comedy show", "reality show", "drama"],
+            "News & Politics": ["news", "politics", "political", "election", "government", "policy", "debate", "current events", "breaking news"],
+            "Howto & Style": ["tutorial", "how to", "diy", "makeup", "fashion", "style", "beauty", "tips", "guide", "cooking", "recipe"],
+            "Travel & Events": ["travel", "vlog travel", "destination", "vacation", "tourism", "event", "conference", "festival", "adventure", "exploration"],
+            "Shows": ["show", "episode", "series", "tv show", "web series", "animated series", "sitcom", "drama series"],
+            "Nonprofits & Activism": ["nonprofit", "charity", "donation", "social cause", "activism", "volunteer", "community service", "fundraiser", "awareness"],
+            "Autos & Vehicles": ["car", "automobile", "vehicle", "motorcycle", "bike", "truck", "driving", "car review", "mechanic", "engineering", "racing"],
+            "Gaming": ["game", "gaming", "streamer", "playthrough", "walkthrough", "gameplay", "esports", "tournament", "console", "pc gaming", "mobile game"],
+            "Comedy": ["comedy", "comedians", "funny", "laugh", "humor", "stand up", "parody", "sketch", "prank"],
+            "Film & Animation": ["movie", "film", "animated", "animation", "cinema", "trailer", "short film", "cartoon", "anime"],
+            "Education": ["tutorial", "learn", "course", "lesson", "educational", "training", "school", "university", "online course", "lecture"],
+            "Pets & Animals": ["pet", "animal", "dog", "cat", "wildlife", "nature", "creature", "cute animals", "veterinary", "zoo"],
+            "Science & Technology": ["technology", "science", "tech", "invention", "experiment", "research", "programming", "coding", "software", "gadget", "artificial intelligence"],
+        }
+
+        # Score each video
+        scored_videos = []
+        for uuid in video_uuids:
+            video = uuid_to_video.get(uuid)
+            if not video:
+                continue
+
+            faiss_score = uuid_to_faiss_score[uuid]
+            title_lower = video.get("title", "").lower()
+            category = video.get("category_name", "")
+
+            # Keyword matching score (0-1)
+            keyword_score = 0.0
+            matching_words = [w for w in query_words if w in title_lower]
+            if matching_words:
+                keyword_score = len(matching_words) / len(query_words)
+
+            # Category boosting score (0-0.3)
+            category_boost = 0.0
+            if category in category_keywords:
+                category_words = category_keywords[category]
+                if any(w in title_lower or w in category.lower() for w in query_words):
+                    category_boost = 0.2
+
+            # Combined score: 70% semantic + 20% keyword + 10% category
+            combined_score = (
+                faiss_score * 0.70 +
+                keyword_score * 100 * 0.20 +
+                category_boost * 100 * 0.10
+            )
+
+            scored_videos.append({
+                "uuid": uuid,
+                "video": video,
+                "combined_score": combined_score
+            })
+
+        # Step 6: Sort by combined score
+        scored_videos.sort(key=lambda x: x["combined_score"], reverse=True)
+
+        # Step 7: Transform to response
+        print(f"[RELOAD] Step 6: Transforming {len(scored_videos)} videos...")
+        video_responses = [transform_video(v["video"]) for v in scored_videos]
+
+        return {
+            "videos": video_responses,
+            "query": query,
+            "total": len(video_responses),
+            "offset": offset
+        }
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid query: {str(e)}"
+        )
+    except Exception as e:
+        print(f"[RELOAD-SEARCH ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Search reload failed"
+        )
+
+
+@router.post("/reload-recommend")
+async def reload_recommendations(request: ReloadRecommendRequest):
+    """
+    Lazy loading endpoint - reload recommendations with pagination.
+
+    This endpoint allows infinite scrolling of recommendations by returning
+    more videos similar to the reference video, excluding all previously shown
+    videos and maintaining the same hybrid ranking as the initial /recommend
+    endpoint.
+
+    Features:
+    - Same hybrid ranking as /recommend (semantic + shared keywords + category)
+    - Excludes all videos in excluded_video_ids list
+    - Returns 15-20 new recommendations per reload
+    - Maintains consistent result quality across reloads
+
+    Args:
+        request: ReloadRecommendRequest with:
+            - video_id: Reference video UUID
+            - excluded_video_ids: Recommendations already shown
+            - limit: Videos to return per reload (default 15)
+
+    Returns:
+        {
+            "videos": [VideoResponse, ...],
+            "current_video_id": reference video UUID,
+            "total": number of new recommendations,
+            "has_more": bool if more recommendations available
+        }
+    """
+    try:
+        video_id = request.video_id
+        excluded_ids = set(request.excluded_video_ids or [])
+        limit = min(request.limit, 50)  # Cap at 50 per reload
+
+        print(f"\n{'#'*70}")
+        print(f"[RELOAD-RECOMMEND] Reference video: {video_id[:8]}...")
+        print(f"[RELOAD-RECOMMEND] Excluding {len(excluded_ids)} already-shown videos")
+        print(f"{'#'*70}")
+
+        # Step 1: Get reference video embedding
+        print(f"[RELOAD-REC] Step 1: Looking up embedding for {video_id[:8]}...")
+        current_embedding = faiss_manager.UUID_TO_EMBEDDING.get(video_id)
+
+        if current_embedding is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Video {video_id} not found or has no embedding"
+            )
+
+        # Step 2: Fetch reference video metadata
+        print(f"[RELOAD-REC] Step 2: Fetching reference video metadata...")
+        ref_videos = await get_videos_metadata_by_uuids([video_id])
+        if not ref_videos:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Video metadata not found"
+            )
+
+        ref_video = ref_videos[0]
+        ref_title = ref_video.get("title", "").lower()
+        ref_category = ref_video.get("category_name", "")
+
+        # Extract keywords from reference video title
+        ref_keywords = set(ref_title.split())
+        # Remove common words
+        common_words = {"the", "a", "an", "and", "or", "in", "on", "at", "to", "from", "of", "for", "is", "are", "was", "were"}
+        ref_keywords = {w for w in ref_keywords if w not in common_words and len(w) > 2}
+
+        # Step 3: FAISS search (get large pool, then filter exclusions)
+        # Get enough to accommodate exclusions + buffer
+        faiss_k = min(limit * 3 + 50, 500)  # Extra buffer for exclusions
+        print(f"[RELOAD-REC] Step 3: FAISS search for K={faiss_k}...")
+        faiss_results = faiss_manager.search_similar(current_embedding, k=faiss_k)
+
+        # Filter out reference video and excluded videos
+        filtered_results = [
+            (uuid_str, score) for uuid_str, score in faiss_results
+            if uuid_str != video_id and uuid_str not in excluded_ids
+        ]
+
+        if not filtered_results:
+            return {
+                "videos": [],
+                "current_video_id": video_id,
+                "total": 0
+            }
+
+        # Take top limit results from filtered pool
+        paginated_results = filtered_results[:limit]
+
+        # Extract UUIDs
+        video_uuids = [uuid_str for uuid_str, _ in paginated_results]
+
+        # Step 4: Fetch metadata
+        print(f"[RELOAD-REC] Step 4: Fetching metadata for {len(video_uuids)} videos...")
+        videos_data = await get_videos_metadata_by_uuids(video_uuids)
+
+        # Create lookup dictionaries
+        uuid_to_faiss_score = {uuid_str: score for uuid_str, score in paginated_results}
+        uuid_to_video = {v["id"]: v for v in videos_data}
+
+        # Step 5: Apply same hybrid ranking as /recommend
+        print(f"[RELOAD-REC] Step 5: Re-ranking with hybrid strategy...")
+
+        # Define category relationships (same as /recommend)
+        related_categories = {
+            "Music": ["Entertainment", "Shows"],
+            "Entertainment": ["Music", "Shows", "Comedy"],
+            "Comedy": ["Entertainment", "People & Blogs"],
+            "Gaming": ["Science & Technology"],
+            "Sports": ["Entertainment"],
+            "Education": ["Science & Technology"],
+            "Travel & Events": ["People & Blogs", "Entertainment"],
+            "Film & Animation": ["Entertainment", "Shows"],
+        }
+
+        scored_videos = []
+        for uuid in video_uuids:
+            video = uuid_to_video.get(uuid)
+            if not video:
+                continue
+
+            faiss_score = uuid_to_faiss_score[uuid]
+            title_lower = video.get("title", "").lower()
+            category = video.get("category_name", "")
+
+            # Shared keywords score (0-1)
+            video_keywords = set(title_lower.split())
+            shared_keywords = ref_keywords.intersection(video_keywords)
+            keyword_score = 0.0
+            if ref_keywords:
+                keyword_score = len(shared_keywords) / len(ref_keywords)
+
+            # Category affinity score (0-1)
+            category_boost = 0.0
+            if category == ref_category:
+                category_boost = 0.4  # 40% boost for same category
+            else:
+                # Weak boost if in related category
+                if ref_category in related_categories and category in related_categories.get(ref_category, []):
+                    category_boost = 0.1
+
+            # Combined score: 70% semantic + 15% shared keywords + 15% category
+            combined_score = (
+                faiss_score * 0.70 +
+                keyword_score * 100 * 0.15 +
+                category_boost * 100 * 0.15
+            )
+
+            scored_videos.append({
+                "uuid": uuid,
+                "video": video,
+                "combined_score": combined_score
+            })
+
+        # Step 6: Sort by combined score
+        scored_videos.sort(key=lambda x: x["combined_score"], reverse=True)
+
+        # Step 7: Transform to response
+        print(f"[RELOAD-REC] Step 6: Transforming {len(scored_videos)} videos...")
+        video_responses = [transform_video(v["video"]) for v in scored_videos]
+
+        return {
+            "videos": video_responses,
+            "current_video_id": video_id,
+            "total": len(video_responses)
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[RELOAD-RECOMMEND ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Recommendation reload failed"
         )
