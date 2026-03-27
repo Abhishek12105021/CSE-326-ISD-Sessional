@@ -604,10 +604,10 @@ async def generate_phase2_feed(
 
     print(f"[PHASE 2] {phase_label} | Bucket allocation → Semantic: {n_vector} | Global Trending: {n_trending} | Local ({user_region}): {n_local}")
 
-    # Semantic search via FAISS (global, no country filter) - over-fetch 5x
+    # Semantic search via FAISS (global, no country filter) - over-fetch 15x
     vector_results = faiss_manager.search_similar(
         taste_vector=taste_vector,
-        k=n_vector * 5,  # Over-fetch to account for exclusions
+        k=max(n_vector * 15, 100),  # Aggressive over-fetch for large exclusion lists
         filter_country=None
     )
     # Filter out watched videos and limit to n_vector
@@ -711,10 +711,10 @@ async def generate_phase3_feed(
     # ===========================================
     # BUCKET A: Semantic / Same Region (60-75%)
     # ===========================================
-    # Over-fetch to account for watched/excluded videos (5x multiplier)
+    # Over-fetch to account for watched/excluded videos (15x multiplier)
     bucket_a_results = faiss_manager.search_similar(
         taste_vector=taste_vector,
-        k=N_A * 5,  # Over-fetch 5x to account for exclusions
+        k=max(N_A * 15, 150),  # Aggressive over-fetch for large exclusion lists
         filter_country=user_region
     )
     # Filter out watched videos and limit to N_A
@@ -775,7 +775,7 @@ async def generate_phase3_feed(
     for country, n_slots in slots.items():
         results = faiss_manager.search_similar(
             taste_vector=taste_vector,
-            k=(n_slots + 5) * 3,  # Over-fetch 3x for filtering
+            k=max((n_slots + 5) * 10, 50),  # 10x over-fetch for large exclusion lists
             filter_country=country
         )
         for uuid, score in results:

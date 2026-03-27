@@ -162,7 +162,16 @@ class AllChannelsResponse(BaseModel):
 
 
 class ReloadFeedRequest(BaseModel):
-    """Request to reload feed with lazy loading"""
+    """Request to reload feed with lazy loading (authenticated users)"""
     excluded_video_ids: list[str] = []  # UUIDs of videos already shown
+    limit: int = 30  # Number of new videos to return
+
+
+class GuestReloadFeedRequest(BaseModel):
+    """Request to reload feed with lazy loading (guest users)"""
+    guest_uuid: str
+    region: str = "US"
+    watched_video_ids: list[str] = []  # All videos watched so far (including current feed)
+    excluded_video_ids: list[str] = []  # Videos already shown in current feed
     limit: int = 30  # Number of new videos to return
 
