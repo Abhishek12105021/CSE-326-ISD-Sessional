@@ -535,20 +535,26 @@ async def generate_phase1_feed(
 
     print(f"[PHASE 1] Cold Start | Bucket allocation → Global: {n_global} | Local ({user_region}): {n_local}")
 
-    # Get trending from FAISS manager (in-memory)
-    global_trending = faiss_manager.get_trending(country=None, top_n=100)
-    global_trending = random.sample(global_trending, min(n_global, len(global_trending)))
-    print(f"[BUCKET GLOBAL] Trending (global) → {len(global_trending)} videos")
+    # Get trending from FAISS manager (in-memory) - over-fetch and filter
+    global_trending_candidates = [
+        uuid for uuid in faiss_manager.get_trending(country=None, top_n=300)
+        if uuid not in watched_video_ids
+    ]
+    global_trending = random.sample(global_trending_candidates, min(n_global, len(global_trending_candidates)))
+    print(f"[BUCKET GLOBAL] Trending (global) → {len(global_trending)} videos (after filtering {len(watched_video_ids)} excluded)")
 
     used_ids = set(global_trending)
-    local_trending = [uuid for uuid in faiss_manager.get_trending(country=user_region, top_n=50) if uuid not in used_ids]
-    local_trending = random.sample(local_trending, min(n_local, len(local_trending)))
+    local_trending_candidates = [
+        uuid for uuid in faiss_manager.get_trending(country=user_region, top_n=200)
+        if uuid not in used_ids and uuid not in watched_video_ids
+    ]
+    local_trending = random.sample(local_trending_candidates, min(n_local, len(local_trending_candidates)))
     print(f"[BUCKET LOCAL] Trending ({user_region}) → {len(local_trending)} videos")
 
     all_video_ids = global_trending + local_trending
     random.shuffle(all_video_ids)
 
-    # Deduplicate
+    # Deduplicate (safety check)
     seen_ids = set()
     deduped = []
     for vid in all_video_ids:
@@ -556,23 +562,9 @@ async def generate_phase1_feed(
             deduped.append(vid)
             seen_ids.add(vid)
 
-    # Filter watched videos: max 10% of results
-    max_watched_allowed = max(1, round(total * 0.1))
-    watched_count = sum(1 for vid in deduped if vid in watched_video_ids)
-
-    if watched_count > max_watched_allowed:
-        # Remove excess watched videos
-        to_remove = watched_count - max_watched_allowed
-        final = []
-        for vid in deduped:
-            if vid in watched_video_ids and to_remove > 0:
-                to_remove -= 1
-            else:
-                final.append(vid)
-        deduped = final
-
+    # No need for watched video filtering - already done
     final_video_ids = deduped[:total]
-    print(f"[PHASE 1] Returning {len(final_video_ids)} video UUIDs")
+    print(f"[PHASE 1] Returning {len(final_video_ids)} video UUIDs (excluded {len(watched_video_ids)} watched videos)")
 
     return final_video_ids
 
@@ -612,30 +604,37 @@ async def generate_phase2_feed(
 
     print(f"[PHASE 2] {phase_label} | Bucket allocation → Semantic: {n_vector} | Global Trending: {n_trending} | Local ({user_region}): {n_local}")
 
-    # Semantic search via FAISS (global, no country filter)
+    # Semantic search via FAISS (global, no country filter) - over-fetch 5x
     vector_results = faiss_manager.search_similar(
         taste_vector=taste_vector,
-        k=n_vector,
+        k=n_vector * 5,  # Over-fetch to account for exclusions
         filter_country=None
     )
-    vector_uuids = [uuid for uuid, score in vector_results]
-    print(f"[BUCKET SEMANTIC] Semantic search (global) → {len(vector_uuids)} videos")
+    # Filter out watched videos and limit to n_vector
+    vector_uuids = [uuid for uuid, score in vector_results if uuid not in watched_video_ids][:n_vector]
+    print(f"[BUCKET SEMANTIC] Semantic search (global) → {len(vector_uuids)} videos (after filtering {len(watched_video_ids)} excluded)")
     used_ids = set(vector_uuids)
 
-    # Trending global
-    trending = [uuid for uuid in faiss_manager.get_trending(country=None, top_n=100) if uuid not in used_ids]
-    trending = random.sample(trending, min(n_trending, len(trending)))
+    # Trending global - over-fetch and filter
+    trending_candidates = [
+        uuid for uuid in faiss_manager.get_trending(country=None, top_n=300)
+        if uuid not in used_ids and uuid not in watched_video_ids
+    ]
+    trending = random.sample(trending_candidates, min(n_trending, len(trending_candidates)))
     print(f"[BUCKET TRENDING] Trending (global) → {len(trending)} videos")
     used_ids.update(trending)
 
-    # Local trending
-    local = [uuid for uuid in faiss_manager.get_trending(country=user_region, top_n=50) if uuid not in used_ids]
-    local = random.sample(local, min(n_local, len(local)))
+    # Local trending - over-fetch and filter
+    local_candidates = [
+        uuid for uuid in faiss_manager.get_trending(country=user_region, top_n=200)
+        if uuid not in used_ids and uuid not in watched_video_ids
+    ]
+    local = random.sample(local_candidates, min(n_local, len(local_candidates)))
     print(f"[BUCKET LOCAL] Trending ({user_region}) → {len(local)} videos")
 
     all_video_ids = vector_uuids + trending + local
 
-    # Deduplicate
+    # Deduplicate (safety check)
     seen_ids = set()
     deduped = []
     for vid in all_video_ids:
@@ -643,23 +642,9 @@ async def generate_phase2_feed(
             deduped.append(vid)
             seen_ids.add(vid)
 
-    # Filter watched videos: max 10% of results
-    max_watched_allowed = max(1, round(total * 0.1))
-    watched_count = sum(1 for vid in deduped if vid in watched_video_ids)
-
-    if watched_count > max_watched_allowed:
-        # Remove excess watched videos
-        to_remove = watched_count - max_watched_allowed
-        final = []
-        for vid in deduped:
-            if vid in watched_video_ids and to_remove > 0:
-                to_remove -= 1
-            else:
-                final.append(vid)
-        deduped = final
-
+    # No need for watched video filtering - already done in each bucket
     final_video_ids = deduped[:total]
-    print(f"[PHASE 2] Returning {len(final_video_ids)} video UUIDs")
+    print(f"[PHASE 2] Returning {len(final_video_ids)} video UUIDs (excluded {len(watched_video_ids)} watched videos)")
 
     return final_video_ids
 
@@ -726,14 +711,16 @@ async def generate_phase3_feed(
     # ===========================================
     # BUCKET A: Semantic / Same Region (60-75%)
     # ===========================================
+    # Over-fetch to account for watched/excluded videos (5x multiplier)
     bucket_a_results = faiss_manager.search_similar(
         taste_vector=taste_vector,
-        k=N_A,
+        k=N_A * 5,  # Over-fetch 5x to account for exclusions
         filter_country=user_region
     )
-    bucket_a = [uuid for uuid, score in bucket_a_results]
+    # Filter out watched videos and limit to N_A
+    bucket_a = [uuid for uuid, score in bucket_a_results if uuid not in watched_video_ids][:N_A]
     used_ids = set(bucket_a)
-    print(f"[BUCKET A] Semantic / Same Region ({user_region}) → {len(bucket_a)} videos")
+    print(f"[BUCKET A] Semantic / Same Region ({user_region}) → {len(bucket_a)} videos (after filtering {len(watched_video_ids)} excluded)")
 
     # ===========================================
     # BUCKET B: Semantic / Mixed Foreign (15-20%)
@@ -788,11 +775,11 @@ async def generate_phase3_feed(
     for country, n_slots in slots.items():
         results = faiss_manager.search_similar(
             taste_vector=taste_vector,
-            k=n_slots + 5,  # Over-fetch for filtering
+            k=(n_slots + 5) * 3,  # Over-fetch 3x for filtering
             filter_country=country
         )
         for uuid, score in results:
-            if uuid not in used_ids and len(bucket_b) < N_B:
+            if uuid not in used_ids and uuid not in watched_video_ids and len(bucket_b) < N_B:
                 bucket_b.append(uuid)
                 used_ids.add(uuid)
 
@@ -801,21 +788,29 @@ async def generate_phase3_feed(
     # ===========================================
     # BUCKET C: Trending / User Region (7-10%)
     # ===========================================
-    bucket_c = [uuid for uuid in faiss_manager.get_trending(country=user_region, top_n=50) if uuid not in used_ids]
-    bucket_c = random.sample(bucket_c, min(N_C, len(bucket_c)))
+    # Over-fetch and filter watched videos
+    bucket_c_candidates = [
+        uuid for uuid in faiss_manager.get_trending(country=user_region, top_n=200)
+        if uuid not in used_ids and uuid not in watched_video_ids
+    ]
+    bucket_c = random.sample(bucket_c_candidates, min(N_C, len(bucket_c_candidates)))
     used_ids.update(bucket_c)
     print(f"[BUCKET C] Trending / User Region ({user_region}) → {len(bucket_c)} videos")
 
     # ===========================================
     # BUCKET D: Trending / Global Mix (3-10%)
     # ===========================================
-    bucket_d = [uuid for uuid in faiss_manager.get_trending(country=None, top_n=100) if uuid not in used_ids]
-    bucket_d = random.sample(bucket_d, min(N_D, len(bucket_d)))
+    # Over-fetch and filter watched videos
+    bucket_d_candidates = [
+        uuid for uuid in faiss_manager.get_trending(country=None, top_n=300)
+        if uuid not in used_ids and uuid not in watched_video_ids
+    ]
+    bucket_d = random.sample(bucket_d_candidates, min(N_D, len(bucket_d_candidates)))
     print(f"[BUCKET D] Trending / Global Mix → {len(bucket_d)} videos")
 
     all_video_ids = bucket_a + bucket_b + bucket_c + bucket_d
 
-    # Deduplicate
+    # Deduplicate (shouldn't be needed since we track used_ids, but safety check)
     seen_ids = set()
     deduped = []
     for vid in all_video_ids:
@@ -823,22 +818,8 @@ async def generate_phase3_feed(
             deduped.append(vid)
             seen_ids.add(vid)
 
-    # Filter watched videos: max 10% of results
-    max_watched_allowed = max(1, round(total * 0.1))
-    watched_count = sum(1 for vid in deduped if vid in watched_video_ids)
-
-    if watched_count > max_watched_allowed:
-        # Remove excess watched videos
-        to_remove = watched_count - max_watched_allowed
-        final = []
-        for vid in deduped:
-            if vid in watched_video_ids and to_remove > 0:
-                to_remove -= 1
-            else:
-                final.append(vid)
-        deduped = final
-
+    # No need for watched video filtering - already done in each bucket
     final_video_ids = deduped[:total]
-    print(f"[PHASE 3] Returning {len(final_video_ids)} video UUIDs")
+    print(f"[PHASE 3] Returning {len(final_video_ids)} video UUIDs (excluded {len(watched_video_ids)} watched videos)")
 
     return final_video_ids

@@ -9,7 +9,7 @@ from app.schemas.feed import (
     DislikeVideoRequest, DislikeResponse, DislikesListResponse,
     SubscribeRequest, SubscriptionResponse, SubscribedChannelsResponse, AllChannelsResponse,
     WatchEventRequest, WatchEventResponse, VideoMetadataRequest, VideoMetadataResponse,
-    DeleteWatchHistoryRequest
+    DeleteWatchHistoryRequest, ReloadFeedRequest
 )
 from app.core.recommendation import (
     get_taste_vector_for_feed,
@@ -165,11 +165,129 @@ async def get_feed(
         interaction_count=interaction_count,
         total=len(video_responses)
     )
-    
-    
-    
-    
-    
+
+
+@router.post("/reload", response_model=FeedResponse)
+async def reload_feed(
+    request: ReloadFeedRequest,
+    region: Optional[str] = Query(default=None),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Lazy loading endpoint - reload feed with more videos excluding already-shown ones.
+
+    This endpoint allows infinite scrolling by returning 30 new recommended videos
+    that exclude all previously shown videos. It uses the same personalization logic
+    as the /feed endpoint but filters out the excluded videos.
+
+    Features:
+    - Same 3-phase personalization strategy as /feed
+    - Excludes all videos in excluded_video_ids list
+    - Returns 30 new videos based on user's current taste vector
+    - Maintains consistent recommendation quality across reloads
+
+    Args:
+        request: ReloadFeedRequest with excluded_video_ids list
+        region: Optional region override (defaults to user's saved region)
+        current_user: Authenticated user from JWT
+
+    Returns:
+        FeedResponse with 30 new videos, strategy, interaction count, and total
+    """
+    total_start = time.time()
+    user_id = current_user["id"]
+    excluded_ids = request.excluded_video_ids or []
+    limit = request.limit
+
+    print(f"\n{'#'*70}")
+    print(f"[RELOAD FEED] Starting for user {user_id[:8]}, excluding {len(excluded_ids)} videos...")
+    print(f"{'#'*70}")
+
+    # Step 1: Fetch user profile for region preference
+    step_start = time.time()
+    db_user = await get_user_by_id(user_id)
+    user_region = region or (db_user.get("region") if db_user else None) or "US"
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[RELOAD Step 1/5] Fetched user profile, region={user_region} ({step_elapsed:.1f}ms)")
+
+    # Step 2: Get taste vector (cached or rebuild) via FAISS manager
+    step_start = time.time()
+    try:
+        taste, interaction_count = await get_taste_vector_for_feed(user_id)
+    except Exception as e:
+        print(f"[WARNING] Failed to get taste vector for user {user_id}: {e}")
+        taste = None
+        interaction_count = 0
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[RELOAD Step 2/5] Got taste vector: interactions={interaction_count}, "
+          f"has_taste={taste is not None} ({step_elapsed:.1f}ms)")
+
+    # Step 3: Combine excluded videos with watch history for comprehensive filtering
+    step_start = time.time()
+    try:
+        history_rows = await get_watch_history(user_id, limit=100)
+        watched_uuids = [row["video_id"] for row in history_rows]
+    except Exception as e:
+        print(f"[WARNING] Failed to fetch watch history: {e}")
+        watched_uuids = []
+
+    # Merge excluded videos with watch history (comprehensive filter list)
+    all_excluded = list(set(excluded_ids + watched_uuids))
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[RELOAD Step 3/5] Built exclusion list: {len(all_excluded)} total "
+          f"({len(excluded_ids)} from request + {len(watched_uuids)} from history) ({step_elapsed:.1f}ms)")
+
+    # Step 4: Determine phase and generate feed (returns UUIDs only)
+    # Use same phase logic as /feed but with all_excluded as filter
+    step_start = time.time()
+    if interaction_count == 0:
+        strategy = "phase_1_cold_start"
+        print(f"[RELOAD Step 4/5] Phase 1 (Cold Start): Generating trending feed...")
+        video_uuids = await generate_phase1_feed(user_region, all_excluded, limit)
+
+    elif 1 <= interaction_count <= 4:
+        strategy = "phase_2_warm_up"
+        print(f"[RELOAD Step 4/5] Phase 2 (Warm-Up): Generating mixed feed...")
+        video_uuids = await generate_phase2_feed(
+            taste, user_region, all_excluded, interaction_count, limit
+        ) if taste is not None else await generate_phase1_feed(user_region, all_excluded, limit)
+
+    else:  # 5+ interactions - Fully personalized
+        strategy = "phase_3_personalized"
+        print(f"[RELOAD Step 4/5] Phase 3 (Personalized): Generating semantic feed...")
+        video_uuids = await generate_phase3_feed(
+            taste, user_region, all_excluded, interaction_count, limit
+        ) if taste is not None else await generate_phase1_feed(user_region, all_excluded, limit)
+
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[RELOAD Step 4/5] Generated {len(video_uuids)} video UUIDs using {strategy} ({step_elapsed:.1f}ms)")
+
+    # Step 5: Fetch metadata for video UUIDs (single DB query, no embeddings)
+    step_start = time.time()
+    videos = await get_videos_metadata_by_uuids(video_uuids)
+    step_elapsed = (time.time() - step_start) * 1000
+    print(f"[RELOAD Step 5/5] Fetched metadata for {len(videos)} videos ({step_elapsed:.1f}ms)")
+
+    # Transform to response format
+    video_responses = [transform_video(v) for v in videos]
+
+    total_elapsed = (time.time() - total_start) * 1000
+    print(f"{'#'*70}")
+    print(f"[RELOAD FEED] Complete! Strategy: {strategy}, "
+          f"Videos: {len(video_responses)}, Total: {total_elapsed:.1f}ms")
+    print(f"{'#'*70}\n")
+
+    return FeedResponse(
+        videos=video_responses,
+        strategy=strategy,
+        interaction_count=interaction_count,
+        total=len(video_responses)
+    )
+
+
+
+
+
 
 
 @router.get("/trending", response_model=FeedResponse)

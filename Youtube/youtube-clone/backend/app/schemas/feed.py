@@ -157,3 +157,12 @@ class AllChannelsResponse(BaseModel):
     channels: list[str]
     total: int
 
+
+# ======================== RELOAD FEED (LAZY LOADING) ========================
+
+
+class ReloadFeedRequest(BaseModel):
+    """Request to reload feed with lazy loading"""
+    excluded_video_ids: list[str] = []  # UUIDs of videos already shown
+    limit: int = 30  # Number of new videos to return
+
