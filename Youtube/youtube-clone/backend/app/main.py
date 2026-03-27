@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from app.config import get_settings
-from app.api.routes import auth, guest, feed
+from app.api.routes import auth, guest, feed, search
 
 settings = get_settings()
 
@@ -15,18 +15,23 @@ async def lifespan(app: FastAPI):
     Startup:
     - Initialize FAISS index with all video embeddings from database
     - Loads ~100-150MB into RAM for fast similarity search
+    - Load sentence-transformer model for query embedding
 
     Shutdown:
     - Optional: Save user taste vectors to database (not implemented yet)
     """
     # Startup
     print("[BOOT] Initializing FAISS index...")
-    from app.core import faiss_manager
+    from app.core import faiss_manager, embedding_service
     await faiss_manager.initialize_faiss()
 
     # Print stats
     stats = faiss_manager.get_index_stats()
     print(f"[BOOT] FAISS index ready: {stats['total_videos']} videos, {stats['memory_mb_videos']:.1f} MB")
+
+    # Load embedding model for search/recommend endpoints
+    print("[BOOT] Loading embedding model...")
+    await embedding_service.load_model()
 
     yield
 
@@ -55,6 +60,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(guest.router, prefix="/api/guest", tags=["Guest"])
 app.include_router(feed.router, prefix="/api", tags=["Feed"])
+app.include_router(search.router, prefix="/api", tags=["Search & Recommendations"])
 
 
 @app.get("/health")
