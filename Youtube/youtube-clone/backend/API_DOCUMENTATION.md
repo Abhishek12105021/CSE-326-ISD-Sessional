@@ -5,8 +5,30 @@
 **Base URL**: `http://localhost:8000` (development)
 **Content Type**: `application/json`
 **Authentication**: JWT Bearer token (for authenticated endpoints)
-**Version**: 1.0.0
+**Version**: 1.1.0 (Added Search & Recommendations)
 **FastAPI**: 0.109.0
+
+### Recent Updates (v1.1.0)
+✨ **NEW Endpoints Added**:
+- `POST /api/search` - Hybrid text search with semantic + keyword + category ranking
+- `POST /api/recommend` - Find similar videos with context-aware scoring
+- `POST /api/reload-search` - Lazy loading for infinite scroll search
+- `POST /api/reload-recommend` - Lazy loading for infinite scroll recommendations
+
+✨ **NEW Features**:
+- Sentence-transformers/bge-m3 embeddings (1024-dim, int8 quantized to 600MB)
+- FAISS vector similarity search
+- Hybrid ranking algorithm (70% semantic + 20% keyword + 10% category)
+- Category keyword detection for search intent
+- Related category graph for recommendations
+- Infinite scroll pagination without "has_more" flag
+
+✨ **Documentation**:
+- Detailed algorithm explanations for each endpoint
+- Code comments in search.py with examples
+- Frontend integration patterns and localStorage management
+- Complete data model specifications
+- Architecture diagrams and flow charts
 
 ---
 
@@ -43,12 +65,19 @@ videos (
 ## Table of Contents
 
 1. [Health & Utility](#health--utility)
-2. [Authenticated Endpoints](#authenticated-endpoints)
-3. [Guest Endpoints](#guest-endpoints)
-4. [Data Models](#data-models)
-5. [3-Phase Strategy](#3-phase-strategy)
-6. [Testing Guide](#testing-guide)
-7. [Error Handling](#error-handling)
+2. [Authentication Endpoints](#authentication-endpoints)
+3. [Authenticated User Endpoints](#authenticated-user-endpoints)
+4. [Guest Endpoints](#guest-endpoints)
+5. [Search & Recommendations](#search--recommendations)
+6. [Reload/Lazy Loading](#reload-endpoints)
+7. [Likes & Dislikes](#likes--dislikes)
+8. [Subscriptions](#subscriptions)
+9. [Video Metadata](#video-metadata)
+10. [Watch Tracking](#watch-tracking)
+11. [Data Models](#data-models)
+12. [3-Phase Strategy](#3-phase-strategy)
+13. [Testing Guide](#testing-guide)
+14. [Error Handling](#error-handling)
 
 ---
 
@@ -107,7 +136,136 @@ curl -X GET "http://localhost:8000/api/categories"
 
 ---
 
-## Authenticated Endpoints
+## Authentication Endpoints
+
+### GET /api/auth/profile
+
+**Description**: Get authenticated user's complete profile combining JWT data + database settings.
+
+**Authentication**: Required - JWT Bearer token
+
+**Response**: `200 OK` - `UserProfile`
+```json
+{
+  "user_id": "550e8400-e29b-41d4-a716-446655440000",
+  "email": "user@example.com",
+  "display_name": "John Doe",
+  "avatar_url": "https://avatars.githubusercontent.com/u/...",
+  "region": "US",
+  "created_at": "2026-03-20T10:30:00Z"
+}
+```
+
+**curl Example**:
+```bash
+curl -X GET "http://localhost:8000/api/auth/profile" \
+     -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+**Details**:
+- Fetches region from database (not in JWT)
+- Auto-creates user on first call if doesn't exist
+- Region defaults to "" (empty) for new users
+
+---
+
+### PUT /api/auth/profile
+
+**Description**: Update user's profile (display_name and/or region).
+
+**Authentication**: Required - JWT Bearer token
+
+**Request Body** (`UpdateProfileRequest`):
+```json
+{
+  "display_name": "New Name",    // Optional
+  "region": "JP"                 // Optional (US, GB, JP, DE, FR, IN, KR, MX, RU, CA)
+}
+```
+
+**Response**: `200 OK` - `UserProfile` (updated)
+
+**curl Example**:
+```bash
+curl -X PUT "http://localhost:8000/api/auth/profile" \
+     -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+     -H "Content-Type: application/json" \
+     -d '{
+       "region": "JP"
+     }'
+```
+
+**Details**:
+- Null values mean "don't update this field"
+- Idempotent: calling twice with same data is safe
+- Partial updates work (update region without changing display_name)
+- Region affects recommendations: 60% of Phase 3 feed is from user's region
+
+---
+
+### POST /api/auth/logout
+
+**Description**: Logout current session.
+
+**Authentication**: Required - JWT Bearer token
+
+**Response**: `200 OK`
+```json
+{
+  "message": "Logged out successfully"
+}
+```
+
+**curl Example**:
+```bash
+curl -X POST "http://localhost:8000/api/auth/logout" \
+     -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+**IMPORTANT**:
+- Backend acknowledges logout only (cannot revoke JWT server-side)
+- Frontend MUST delete JWT from localStorage
+- Only logs out this device/session
+- To logout all devices, use `/api/auth/logout-all`
+
+---
+
+### POST /api/auth/logout-all
+
+**Description**: Logout from ALL devices/sessions.
+
+**Authentication**: Required - JWT Bearer token
+
+**Response**: `200 OK`
+```json
+{
+  "message": "All sessions marked for logout. Frontend should call supabase.auth.signOut({ scope: 'global' })"
+}
+```
+
+**curl Example**:
+```bash
+curl -X POST "http://localhost:8000/api/auth/logout-all" \
+     -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+**Frontend Integration**:
+```javascript
+// After calling /api/auth/logout-all, frontend must revoke at Supabase:
+const { error } = await supabase.auth.signOut({ scope: 'global' });
+
+// This invalidates ALL JWT tokens issued to this user
+// All devices must sign in again
+```
+
+**CRITICAL**:
+- Backend endpoint only gives instructions
+- Frontend MUST call `supabase.auth.signOut({ scope: 'global' })`
+- Without this Supabase call, other devices' JWTs remain valid
+
+---
+
+## Authenticated User Endpoints
 
 ### GET /api/feed
 
@@ -224,6 +382,87 @@ curl -X GET "http://localhost:8000/api/trending?region=JP&limit=20"
   "strategy": "trending_only",
   "interaction_count": 0,
   "total": 20
+}
+```
+
+---
+
+### POST /api/reload
+
+**Description**: Lazy loading endpoint for authenticated users - reload feed with more videos excluding already-shown ones.
+
+**Authentication**: Required - JWT Bearer token
+
+**Request Body** (`ReloadFeedRequest`):
+```json
+{
+  "excluded_video_ids": [
+    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "b2c3d4e5-f6a7-8901-bcde-f23456789012",
+    // ... all UUIDs from previous /feed and /reload calls
+  ],
+  "limit": 30
+}
+```
+
+**Field Details**:
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `excluded_video_ids` | array | ❌ | `[]` | UUIDs to exclude from results |
+| `limit` | integer | ❌ | `30` | Videos to return (1-50) |
+
+**Response**: `200 OK` - [FeedResponse](#feedresponse)
+
+**curl Example**:
+```bash
+curl -X POST "http://localhost:8000/api/reload" \
+     -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+     -H "Content-Type: application/json" \
+     -d '{
+       "excluded_video_ids": ["uuid-1", "uuid-2", ..., "uuid-30"],
+       "limit": 30
+     }'
+```
+
+**How It Works**:
+1. Uses same personalization logic as `/feed` (3-phase strategy)
+2. Excludes all videos in `excluded_video_ids` list
+3. Returns next batch of 20-30 new personalized videos
+4. Guaranteed no duplicates with previous batch
+
+**Frontend Implementation Pattern**:
+```javascript
+let allShownVideoIds = new Set();
+
+// Step 1: Initial feed
+async function initialFeed() {
+  const response = await fetch('/api/feed?limit=30', {
+    headers: { 'Authorization': `Bearer ${jwtToken}` }
+  });
+  const data = await response.json();
+  data.videos.forEach(v => allShownVideoIds.add(v.id));
+  displayVideos(data.videos);
+}
+
+// Step 2: Load more on infinite scroll
+async function loadMore() {
+  const response = await fetch('/api/reload', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${jwtToken}`
+    },
+    body: JSON.stringify({
+      excluded_video_ids: Array.from(allShownVideoIds),
+      limit: 30
+    })
+  });
+
+  const data = await response.json();
+  data.videos.forEach(v => allShownVideoIds.add(v.id));
+  displayVideos(data.videos);
+
+  return data.total > 0;  // true if more available
 }
 ```
 
@@ -440,7 +679,639 @@ curl -X POST "http://localhost:8000/api/guest/watch" \
 
 ---
 
-## 3-Phase Strategy
+### POST /api/like
+**Description**: Like or unlike a video for authenticated user.
+
+**Authentication**: Required - JWT Bearer token
+
+**Request Body** (`LikeVideoRequest`):
+```json
+{
+  "video_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+**Response**: `200 OK` - `LikeResponse`
+```json
+{
+  "success": true,
+  "message": "Video liked successfully",
+  "is_liked": true
+}
+```
+
+---
+
+### POST /api/dislike
+**Description**: Dislike or remove dislike from a video for authenticated user.
+
+**Authentication**: Required - JWT Bearer token
+
+**Request Body** (`DislikeVideoRequest`):
+```json
+{
+  "video_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+**Response**: `200 OK` - `DislikeResponse`
+```json
+{
+  "success": true,
+  "message": "Video disliked successfully",
+  "is_disliked": true
+}
+```
+
+---
+
+### POST /api/subscribe
+**Description**: Subscribe or unsubscribe from a channel.
+
+**Authentication**: Required - JWT Bearer token
+
+**Request Body** (`SubscribeRequest`):
+```json
+{
+  "channel_name": "Netflix"
+}
+```
+
+**Response**: `200 OK` - `SubscriptionResponse`
+```json
+{
+  "success": true,
+  "message": "Subscribed to Netflix",
+  "is_subscribed": true
+}
+```
+
+---
+
+## Search & Recommendations
+
+### POST /api/search
+
+**Description**: Full-text hybrid search combining semantic similarity, keyword matching, and category intelligence.
+
+**Authentication**: None required
+
+**Query Parameters**:
+| Parameter | Type | Required | Default | Max | Description |
+|-----------|------|----------|---------|-----|-------------|
+| `q` | string | ✅ | - | 500 | Search query (e.g., "gaming tutorials", "bts band") |
+| `limit` | integer | ❌ | `50` | `100` | Number of results to return |
+
+**How It Works**:
+1. **Embed Query**: Convert search text to 1024-dim vector using sentence-transformers/bge-m3
+2. **FAISS Search**: Find 2x limit semantically similar videos from vector database
+3. **Keyword Matching**: Count how many query words appear in video title
+4. **Category Boost**: Detect category intent from query using category keywords
+5. **Hybrid Ranking**: Combine scores: 70% semantic + 20% keyword + 10% category
+6. **Return Top K**: Return top limit results sorted by combined score
+
+**Request**:
+```bash
+curl -X POST "http://localhost:8000/api/search?q=gaming%20tutorials&limit=25"
+```
+
+**Response**: `200 OK`
+```json
+{
+  "videos": [
+    {
+      "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "video_id": "dQw4w9WgXcQ",
+      "title": "How to Learn Gaming - Complete Tutorial",
+      "thumbnail": "https://i.ytimg.com/vi/dQw4w9WgXcQ/default.jpg",
+      "channel": {
+        "name": "Tech Tutorials",
+        "avatar": "https://ui-avatars.com/api/?name=Tech%20Tutorials&background=8B5CF6&color=fff&size=36",
+        "verified": true,
+        "id": "Tech Tutorials"
+      },
+      "views": "1.2M views",
+      "timestamp": "2 weeks ago",
+      "duration": "10:00",
+      "category": "Gaming",
+      "velocity_score": 15.234
+    },
+    // ... 24 more results
+  ],
+  "query": "gaming tutorials",
+  "total": 25
+}
+```
+
+**Scoring Algorithm**:
+```python
+# For each result video:
+faiss_score = cosine_similarity(query_embedding, video_embedding)  # 0.0-1.0
+keyword_score = (matching_words / total_query_words)  # 0.0-1.0
+category_boost = 0.2 if category_matches_intent else 0.0  # 0.0-0.2
+
+combined_score = (
+    faiss_score * 0.70 +
+    keyword_score * 100 * 0.20 +
+    category_boost * 100 * 0.10
+)
+```
+
+**Frontend Integration**:
+```javascript
+// Frontend code to use /search
+
+// 1. Send search query
+const response = await fetch('/api/search?q=gaming%20tutorials&limit=25');
+const data = await response.json();
+
+// 2. Display videos
+data.videos.forEach(video => {
+  displayVideoCard(video);
+  // Store video.id in a Set for lazy loading
+  shownVideoIds.add(video.id);
+});
+
+// 3. For pagination, use /reload-search endpoint (see below)
+```
+
+**Supported Categories** (16 total):
+Sports, Music, People & Blogs, Entertainment, News & Politics, Howto & Style, Travel & Events, Shows, Nonprofits & Activism, Autos & Vehicles, Gaming, Comedy, Film & Animation, Education, Pets & Animals, Science & Technology
+
+---
+
+### POST /api/recommend
+
+**Description**: Find videos similar to a specific reference video with context-aware ranking.
+
+**Authentication**: None required
+
+**Query Parameters**:
+| Parameter | Type | Required | Default | Max | Description |
+|-----------|------|----------|---------|-----|-------------|
+| `video_id` | string | ✅ | - | - | Reference video UUID (from videos.id, NOT YouTube ID) |
+| `limit` | integer | ❌ | `15` | `50` | Number of recommendations to return |
+
+**How It Works**:
+1. **Get Reference**: Fetch reference video's embedding and metadata (title, category)
+2. **Extract Keywords**: Parse reference title, remove common words, keep meaningful terms
+3. **FAISS Search**: Find 2x limit semantically similar videos
+4. **Score on Context**:
+   - Shared keywords with reference title (+15% weight)
+   - Same category as reference (+40% weight)
+   - Related categories (+10% weight)
+5. **Hybrid Ranking**: 70% semantic + 15% keywords + 15% category
+6. **Exclude Self**: Never return the reference video itself
+
+**Request**:
+```bash
+curl -X POST "http://localhost:8000/api/recommend?video_id=a1b2c3d4-e5f6-7890-abcd-ef1234567890&limit=10"
+```
+
+**Response**: `200 OK`
+```json
+{
+  "videos": [
+    {
+      "id": "b2c3d4e5-f6a7-8901-bcde-f23456789012",
+      "video_id": "jLM2ibaRbrk",
+      "title": "Flinch w/ Harry Styles",
+      "thumbnail": "https://i.ytimg.com/vi/jLM2ibaRbrk/default.jpg",
+      "channel": {
+        "name": "The Late Late Show with James Corden",
+        "avatar": "https://ui-avatars.com/api/?name=The%20Late%20Late%20Show%20with%20James%20Corden&background=8B5CF6&color=fff&size=36",
+        "verified": true,
+        "id": "The Late Late Show with James Corden"
+      },
+      "views": "3.2M views",
+      "timestamp": "1 year ago",
+      "duration": "10:00",
+      "category": "Entertainment",
+      "velocity_score": 12.456
+    },
+    // ... 9 more results
+  ],
+  "current_video_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "total": 10
+}
+```
+
+**Category Relationships** (for related category boost):
+- Music ↔ Entertainment, Shows
+- Entertainment ↔ Music, Shows, Comedy
+- Comedy ↔ Entertainment, People & Blogs
+- Gaming ↔ Science & Technology
+- Sports ↔ Entertainment
+- Education ↔ Science & Technology
+- Travel & Events ↔ People & Blogs, Entertainment
+- Film & Animation ↔ Entertainment, Shows
+
+**Frontend Integration**:
+```javascript
+// Frontend code for /recommend endpoint
+
+// 1. User clicks "More Like This" on a video
+const videoId = currentVideo.id;  // Store this UUID!
+
+// 2. Fetch recommendations
+const response = await fetch(`/api/recommend?video_id=${videoId}&limit=15`);
+const data = await response.json();
+
+// 3. Display sidebar or modal with similar videos
+displayRecommendations(data.videos);
+
+// 4. For pagination, use /reload-recommend (see below)
+```
+
+---
+
+## Reload Endpoints
+
+### POST /api/reload-search
+
+**Description**: Lazy loading endpoint for infinite scrolling through search results. Returns next batch of semantically similar videos while excluding all previously shown results.
+
+**Authentication**: None required
+
+**Request Body** (`SearchReloadRequest`):
+```json
+{
+  "q": "gaming tutorials",
+  "excluded_video_ids": [
+    "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "b2c3d4e5-f6a7-8901-bcde-f23456789012",
+    // ... all UUIDs from previous /search and previous /reload-search calls
+  ],
+  "offset": 0,
+  "limit": 25
+}
+```
+
+**Field Details**:
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `q` | string | ✅ | - | Original search query (same as /search) |
+| `excluded_video_ids` | array | ❌ | `[]` | UUIDs already shown to user |
+| `offset` | integer | ❌ | `0` | Pagination offset within filtered results |
+| `limit` | integer | ❌ | `25` | Videos to return per reload (1-50) |
+
+**How It Works**:
+1. **Same Query Embedding**: Embed the query AGAIN to same 1024-dim vector
+2. **FAISS Search**: Find K*2 + buffer (400-500) results
+3. **Filter Exclusions**: Remove all videos in excluded_video_ids
+4. **Apply Offset**: Get results from offset to offset+limit
+5. **Re-rank**: Apply same hybrid ranking (70% semantic + 20% keyword + 10% category)
+6. **Return**: Sorted unique results
+
+**Request**:
+```bash
+curl -X POST "http://localhost:8000/api/reload-search" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "q": "gaming tutorials",
+       "excluded_video_ids": ["uuid-1", "uuid-2", ..., "uuid-25"],
+       "offset": 0,
+       "limit": 25
+     }'
+```
+
+**Response**: `200 OK`
+```json
+{
+  "videos": [
+    // Next 25 unique videos, semantically similar to query
+  ],
+  "query": "gaming tutorials",
+  "total": 25,
+  "offset": 0
+}
+```
+
+**Frontend Implementation Pattern**:
+```javascript
+// Infinite scroll with /reload-search
+
+let searchQuery = "gaming tutorials";
+let allShownVideoIds = new Set();
+
+// Step 1: Initial search
+async function initialSearch() {
+  const response = await fetch(`/api/search?q=${searchQuery}&limit=25`);
+  const data = await response.json();
+
+  data.videos.forEach(v => allShownVideoIds.add(v.id));
+  displayVideos(data.videos);
+
+  return data.videos.length > 0;
+}
+
+// Step 2: Reload on scroll
+async function loadMore() {
+  const response = await fetch('/api/reload-search', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      q: searchQuery,
+      excluded_video_ids: Array.from(allShownVideoIds),
+      offset: 0,
+      limit: 25
+    })
+  });
+
+  const data = await response.json();
+
+  data.videos.forEach(v => allShownVideoIds.add(v.id));
+  displayVideos(data.videos);
+
+  return data.total > 0;  // true if more available
+}
+
+// Step 3: User scrolls to bottom
+window.addEventListener('scroll', () => {
+  if (isNearBottom()) {
+    loadMore();
+  }
+});
+```
+
+---
+
+### POST /api/reload-recommend
+
+**Description**: Lazy loading for continuous recommendations. Returns new recommendations for the same reference video, excluding all previously shown results.
+
+**Authentication**: None required
+
+**Request Body** (`ReloadRecommendRequest`):
+```json
+{
+  "video_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "excluded_video_ids": [
+    "b2c3d4e5-f6a7-8901-bcde-f23456789012",
+    "c3d4e5f6-a7b8-9012-cdef-345678901234",
+    // ... all UUIDs from previous /recommend and /reload-recommend calls
+  ],
+  "limit": 15
+}
+```
+
+**Field Details**:
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `video_id` | string | ✅ | - | Reference video UUID (same as /recommend) |
+| `excluded_video_ids` | array | ❌ | `[]` | UUIDs already shown |
+| `limit` | integer | ❌ | `15` | Videos to return (1-50) |
+
+**How It Works**:
+1. **Use Cached Embedding**: Fetch reference video's pre-computed embedding
+2. **FAISS Search**: Find K*3 + buffer (500) semantically similar videos
+3. **Filter Exclusions**: Remove reference video and all shown videos
+4. **Take Top K**: Get first limit results from filtered pool
+5. **Re-rank**: Apply same hybrid ranking (70% semantic + 15% keywords + 15% category)
+6. **Return**: Sorted unique results
+
+**Request**:
+```bash
+curl -X POST "http://localhost:8000/api/reload-recommend" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "video_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+       "excluded_video_ids": ["uuid-1", "uuid-2", ..., "uuid-15"],
+       "limit": 15
+     }'
+```
+
+**Response**: `200 OK`
+```json
+{
+  "videos": [
+    // Next 15 unique recommendations for same reference video
+  ],
+  "current_video_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "total": 15
+}
+```
+
+**Frontend Implementation Pattern**:
+```javascript
+// Infinite scroll recommendations sidebar
+
+let referenceVideoId = "a1b2c3d4-e5f6-7890-abcd-ef1234567890";
+let allRecommendations = new Set();
+
+// Step 1: Show initial recommendations
+async function initialRecommend() {
+  const response = await fetch(`/api/recommend?video_id=${referenceVideoId}&limit=15`);
+  const data = await response.json();
+
+  data.videos.forEach(v => {
+    allRecommendations.add(v.id);
+    displayRecommendationInSidebar(v);
+  });
+}
+
+// Step 2: Load more on scroll down in recommendations
+async function loadMoreRecommendations() {
+  const response = await fetch('/api/reload-recommend', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      video_id: referenceVideoId,
+      excluded_video_ids: Array.from(allRecommendations),
+      limit: 15
+    })
+  });
+
+  const data = await response.json();
+
+  data.videos.forEach(v => {
+    allRecommendations.add(v.id);
+    displayRecommendationInSidebar(v);
+  });
+}
+```
+
+---
+
+## Likes & Dislikes
+
+### POST /api/like
+
+**Description**: Toggle like status on a video for authenticated user.
+
+**Authentication**: Required - JWT Bearer token
+
+**Request Body** (`LikeVideoRequest`):
+```json
+{
+  "video_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+**Response**: `200 OK` - `LikeResponse`
+```json
+{
+  "success": true,
+  "message": "Video liked successfully",
+  "is_liked": true
+}
+```
+
+**Frontend Integration**:
+```javascript
+// Like/unlike toggle
+
+async function toggleLike(videoId) {
+  const response = await fetch('/api/like', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${jwtToken}`
+    },
+    body: JSON.stringify({
+      video_uuid: videoId
+    })
+  });
+
+  const data = await response.json();
+
+  if (data.is_liked) {
+    showThumbsUpFilled();
+  } else {
+    showThumbsUpOutline();
+  }
+}
+```
+
+---
+
+### POST /api/dislike
+
+**Description**: Toggle dislike status on a video for authenticated user.
+
+**Authentication**: Required - JWT Bearer token
+
+**Request Body** (`DislikeVideoRequest`):
+```json
+{
+  "video_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+**Response**: `200 OK` - `DislikeResponse`
+```json
+{
+  "success": true,
+  "message": "Video disliked successfully",
+  "is_disliked": true
+}
+```
+
+---
+
+## Subscriptions
+
+### POST /api/subscribe
+
+**Description**: Toggle subscription status to a channel for authenticated user.
+
+**Authentication**: Required - JWT Bearer token
+
+**Request Body** (`SubscribeRequest`):
+```json
+{
+  "channel_name": "Netflix"
+}
+```
+
+**Response**: `200 OK` - `SubscriptionResponse`
+```json
+{
+  "success": true,
+  "message": "Successfully subscribed to Netflix",
+  "is_subscribed": true
+}
+```
+
+**Frontend Integration**:
+```javascript
+// Subscribe/unsubscribe button
+
+async function toggleSubscribe(channelName) {
+  const response = await fetch('/api/subscribe', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${jwtToken}`
+    },
+    body: JSON.stringify({
+      channel_name: channelName
+    })
+  });
+
+  const data = await response.json();
+
+  if (data.is_subscribed) {
+    updateButton("Unsubscribe");
+    incrementSubscriberCount();
+  } else {
+    updateButton("Subscribe");
+    decrementSubscriberCount();
+  }
+}
+```
+
+---
+
+## Video Metadata
+
+### POST /api/video-metadata
+
+**Description**: Get complete metadata for a single video by UUID.
+
+**Authentication**: None required
+
+**Request Body** (`VideoMetadataRequest`):
+```json
+{
+  "video_uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+}
+```
+
+**Response**: `200 OK` - `VideoMetadataResponse`
+```json
+{
+  "id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "video_id": "dQw4w9WgXcQ",
+  "title": "Rick Astley - Never Gonna Give You Up (Official Video)",
+  "description": "The official video for 'Never Gonna Give You Up'...",
+  "thumbnail": "https://i.ytimg.com/vi/dQw4w9WgXcQ/mqdefault.jpg",
+  "channel": {
+    "name": "Rick Astley",
+    "avatar": "https://ui-avatars.com/api/?name=Rick%20Astley&background=8B5CF6&color=fff&size=36",
+    "verified": true,
+    "id": "Rick Astley"
+  },
+  "views": "1.2B views",
+  "views_raw": 1200000000,
+  "likes": 15000000,
+  "dislikes": 500000,
+  "timestamp": "15 years ago",
+  "publish_time_raw": "2009-10-25T06:57:33.000Z",
+  "duration": "10:00",
+  "category": "Music",
+  "velocity_score": 85.5,
+  "region": "US",
+  "tags": ["never", "gonna", "give", "you", "up"],
+  "has_embedding": true,
+  "created_at": "2026-01-15T10:30:00.000Z",
+  "updated_at": "2026-03-20T15:45:00.000Z"
+}
+```
+
+---
+
+
 
 ### Phase 1: Absolute Cold Start (0 interactions)
 
@@ -502,78 +1373,401 @@ curl -X POST "http://localhost:8000/api/guest/watch" \
 ## Data Models
 
 ### VideoResponse
+Basic video object returned in feed responses, search results, and recommendations.
 
 ```json
 {
-  "id": "string",                    // UUID from videos.id (DB primary key)
-  "video_id": "string",              // YouTube video ID (for embedding)
+  "id": "string (UUID)",                    // UUID from videos.id (DB primary key) - USE FOR localStorage
+  "video_id": "string",                     // YouTube video ID - USE FOR iframe embedding
   "title": "string",
-  "thumbnail": "string",             // YouTube thumbnail URL
+  "thumbnail": "string",                    // YouTube thumbnail URL (https://i.ytimg.com...)
   "channel": {
-    "name": "string",
-    "avatar": "string",              // Generated ui-avatars.com URL
-    "verified": "boolean",           // Heuristic: views > 100k or likes > 5k
-    "id": "string"                   // Same as name for now
+    "name": "string",                       // Channel title
+    "avatar": "string",                     // Generated avatar URL (ui-avatars.com)
+    "verified": "boolean",                  // Heuristic: views > 100k or likes > 5k
+    "id": "string"                          // Channel identifier (same as name)
   },
-  "views": "string",                 // Formatted: "1.2M views"
-  "timestamp": "string",             // Relative: "1 year ago"
-  "duration": "string",              // Hardcoded "10:00" for MVP
-  "category": "string",
-  "velocity_score": "number|null"    // Trending score (0-100), for debugging
+  "views": "string",                        // Formatted: "1.2M views", "50K views"
+  "timestamp": "string",                    // Relative time: "2 weeks ago", "1 year ago"
+  "duration": "string",                     // Video duration: "10:00", "15:30"
+  "category": "string",                     // Category: Gaming, Music, Entertainment, etc.
+  "velocity_score": "number|null"           // Trending score (0-100), null if not available
 }
 ```
 
 ### FeedResponse
+General feed response structure.
 
 ```json
 {
-  "videos": "VideoResponse[]",       // Array of video objects
-  "strategy": "string",              // Phase identifier
-  "interaction_count": "number",     // Number of videos in watch history
-  "total": "number"                  // Number of videos returned
+  "videos": "VideoResponse[]",              // Array of video objects
+  "strategy": "string",                     // Strategy used: "phase_1_cold_start", "phase_2_warm_up", "phase_3_personalized", "trending_only"
+  "interaction_count": "number",            // Total interactions (watch history count)
+  "total": "number"                         // Total videos returned
+}
+```
+
+### SearchResponse
+Response from `/search` endpoint.
+
+```json
+{
+  "videos": "VideoResponse[]",
+  "query": "string",                        // Original search query
+  "total": "number"                         // Number of results returned
+}
+```
+
+### RecommendResponse
+Response from `/recommend` endpoint.
+
+```json
+{
+  "videos": "VideoResponse[]",
+  "current_video_id": "string (UUID)",      // Reference video UUID
+  "total": "number"                         // Number of recommendations
+}
+```
+
+### ReloadSearchResponse
+Response from `/reload-search` endpoint.
+
+```json
+{
+  "videos": "VideoResponse[]",
+  "query": "string",                        // Original search query
+  "total": "number",                        // Total in this batch
+  "offset": "number"                        // Offset used
+}
+```
+
+### ReloadRecommendResponse
+Response from `/reload-recommend` endpoint.
+
+```json
+{
+  "videos": "VideoResponse[]",
+  "current_video_id": "string (UUID)",      // Reference video UUID
+  "total": "number"                         // Total in this batch
+}
+```
+
+### VideoMetadataResponse
+Complete metadata for a video (from `/video-metadata` endpoint).
+
+```json
+{
+  "id": "string (UUID)",
+  "video_id": "string",
+  "title": "string",
+  "description": "string",                  // Full video description
+  "thumbnail": "string",
+  "channel": "ChannelInfo",
+  "views": "string",                        // Formatted
+  "views_raw": "number",                    // Raw view count
+  "likes": "number",
+  "dislikes": "number",
+  "timestamp": "string",                    // Relative time
+  "publish_time_raw": "string",             // ISO timestamp
+  "duration": "string",
+  "category": "string",
+  "velocity_score": "number|null",
+  "region": "string",                       // Country code
+  "tags": "string[]",                       // Video tags/keywords
+  "has_embedding": "boolean",               // If video has embedding vector
+  "created_at": "string",                   // ISO timestamp
+  "updated_at": "string"                    // ISO timestamp
 }
 ```
 
 ### GuestFeedRequest
+Request to get feed for guest user.
 
 ```json
 {
-  "guest_uuid": "string",            // Required: guest identifier
-  "region": "string",                // Optional: default "US"
-  "limit": "number",                 // Optional: default 30, max 50
-  "watched_video_ids": "string[]"    // Optional: UUIDs from videos.id
+  "guest_uuid": "string",                   // Required: unique guest identifier
+  "region": "string",                       // Optional, default "US"
+  "limit": "number",                        // Optional, default 30, max 50
+  "watched_video_ids": "string[]"           // Optional: UUIDs from videos.id table
 }
 ```
 
 ### WatchEventRequest
+Request to track watch events (INSERT or UPDATE).
 
 ```json
 {
-  "video_uuid": "string",            // Required: UUID from videos.id
-  "watch_id": "string|null",         // Present only for UPDATE mode
-  "watch_duration_seconds": "number|null",  // From YouTube API, UPDATE mode only
-  "guest_uuid": "string|null"        // For guests
+  "video_uuid": "string",                   // Required: UUID from videos.id
+  "watch_id": "string|null",                // Present only for UPDATE
+  "watch_duration_seconds": "number|null",  // From YouTube API, UPDATE only
+  "guest_uuid": "string|null"               // For guests
 }
 ```
 
 ### WatchEventResponse
+Response from watch event tracking.
 
 ```json
 {
-  "watch_id": "string|null",         // Returned only on INSERT
-  "success": "boolean"               // Always true if no error
+  "watch_id": "string|null",                // Returned ONLY on INSERT
+  "success": "boolean"                      // true if successful
+}
+```
+
+### LikeVideoRequest / DislikeVideoRequest
+```json
+{
+  "video_uuid": "string"                    // UUID from videos.id
+}
+```
+
+### LikeResponse / DislikeResponse
+```json
+{
+  "success": "boolean",
+  "message": "string",                      // Human readable message
+  "is_liked": "boolean"                     // Current state after action
+}
+```
+
+### SubscribeRequest
+```json
+{
+  "channel_name": "string"                  // Channel title (from videos.channel_title)
+}
+```
+
+### SubscriptionResponse
+```json
+{
+  "success": "boolean",
+  "message": "string",
+  "is_subscribed": "boolean"                // Current subscription state
 }
 ```
 
 ### CategoriesResponse
-
 ```json
 {
-  "categories": "string[]"           // List starting with "All"
+  "categories": "string[]"                  // Starts with "All", then alphabetical
 }
 ```
 
 ---
+
+## Frontend Implementation Guide
+
+### LocalStorage Management
+
+**What to Store**:
+```javascript
+// App startup
+const guest_uuid = localStorage.getItem('guest_uuid') || generateUUID();
+localStorage.setItem('guest_uuid', guest_uuid);
+
+// Watch events
+const shownVideoIds = new Set(JSON.parse(localStorage.getItem('shown_videos') || '[]'));
+
+// Search state
+const searchHistory = JSON.parse(localStorage.getItem('search_history') || '[]');
+
+// Liked videos (optional, can also fetch from backend)
+const likedVideos = new Set(JSON.parse(localStorage.getItem('liked_videos') || '[]'));
+```
+
+**Guest Feed Tracking**:
+```javascript
+// After fetching feed
+const feed = await fetchGuestFeed(guest_uuid, region, watched_ids);
+
+// Store all shown videos
+feed.videos.forEach(v => shownVideoIds.add(v.id));
+localStorage.setItem('shown_videos', JSON.stringify(Array.from(shownVideoIds)));
+```
+
+**Watch History for Feed Personalization**:
+```javascript
+// Track which videos user has interacted with
+const watchedVideos = new Set(   // Only store UUIDs!
+  JSON.parse(localStorage.getItem('watched_videos') || '[]')
+);
+
+// When user clicks a video:
+async function onVideoClick(video) {
+  const watch = await trackWatchEvent(video.id, guest_uuid);  // INSERT
+  watchedVideos.add(video.id);
+  localStorage.setItem('watched_videos', JSON.stringify(Array.from(watchedVideos)));
+}
+
+// When user leaves video after 30 seconds:
+async function onVideoEnd(video, watchDurationSeconds) {
+  await updateWatchEvent(video.id, watch.watch_id, watchDurationSeconds, guest_uuid);  // UPDATE
+}
+
+// When fetching new feed:
+const feed = await fetchGuestFeed(
+  guest_uuid,
+  region,
+  Array.from(watchedVideos)  // Send to backend
+);
+```
+
+### Search & Recommendations Flow
+
+**Search with Lazy Loading**:
+```javascript
+class SearchManager {
+  constructor() {
+    this.currentQuery = '';
+    this.allResults = [];
+    this.shownIds = new Set();
+  }
+
+  async initialSearch(query, limit = 25) {
+    this.currentQuery = query;
+    this.shownIds.clear();
+
+    const response = await fetch(
+      `/api/search?q=${encodeURIComponent(query)}&limit=${limit}`
+    );
+    const data = await response.json();
+
+    this.allResults = data.videos;
+    data.videos.forEach(v => this.shownIds.add(v.id));
+
+    return data.videos;
+  }
+
+  async loadMore(limit = 25) {
+    const response = await fetch('/api/reload-search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        q: this.currentQuery,
+        excluded_video_ids: Array.from(this.shownIds),
+        offset: 0,
+        limit: limit
+      })
+    });
+
+    const data = await response.json();
+    data.videos.forEach(v => this.shownIds.add(v.id));
+
+    return data.videos;
+  }
+}
+```
+
+**Recommendations with Lazy Loading**:
+```javascript
+class RecommendManager {
+  constructor(referenceVideoId) {
+    this.videoId = referenceVideoId;
+    this.shownIds = new Set();
+  }
+
+  async getInitial(limit = 15) {
+    const response = await fetch(
+      `/api/recommend?video_id=${this.videoId}&limit=${limit}`
+    );
+    const data = await response.json();
+
+    data.videos.forEach(v => this.shownIds.add(v.id));
+    return data.videos;
+  }
+
+  async loadMore(limit = 15) {
+    const response = await fetch('/api/reload-recommend', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        video_id: this.videoId,
+        excluded_video_ids: Array.from(this.shownIds),
+        limit: limit
+      })
+    });
+
+    const data = await response.json();
+    data.videos.forEach(v => this.shownIds.add(v.id));
+
+    return data.videos;
+  }
+}
+```
+
+### Authenticated User Flow
+
+```javascript
+// After login, get JWT from Supabase
+const jwtToken = await getSupabaseToken();
+localStorage.setItem('auth_token', jwtToken);
+
+// Get personalized feed
+async function getPersonalizedFeed(region = 'US', limit = 30) {
+  const response = await fetch(
+    `/api/feed?region=${region}&limit=${limit}`,
+    {
+      headers: {
+        'Authorization': `Bearer ${jwtToken}`
+      }
+    }
+  );
+  return await response.json();
+}
+
+// Like/unlike video
+async function toggleLike(videoId) {
+  const response = await fetch('/api/like', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${jwtToken}`
+    },
+    body: JSON.stringify({ video_uuid: videoId })
+  });
+  return await response.json();
+}
+
+// Subscribe to channel
+async function toggleSubscribe(channelName) {
+  const response = await fetch('/api/subscribe', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${jwtToken}`
+    },
+    body: JSON.stringify({ channel_name: channelName })
+  });
+  return await response.json();
+}
+```
+
+---
+
+## Backend Files to Read
+
+### Architecture Understanding
+- **`app/main.py`**: Entry point, route registration, lifespan hooks
+- **`app/core/embedding_service.py`**: BGE-M3 embedding model loading (int8 quantization)
+- **`app/core/faiss_manager.py`**: FAISS vector search initialization and caching
+- **`app/core/recommendation.py`**: 3-phase recommendation strategy implementation
+
+### Database & APIs
+- **`app/db.py`**: Supabase REST API calls, video metadata fetching
+- **`app/schemas/feed.py`**: All request/response Pydantic models
+- **`app/utils/formatters.py`**: View formatting, timestamp parsing, channel verification
+
+### Endpoint Implementations
+- **`app/api/routes/feed.py`**: `/feed`, `/trending`, `/guest/feed`, `/guest/watch` endpoints
+- **`app/api/routes/search.py`**: `/search`, `/recommend`, `/reload-search`, `/reload-recommend` endpoints
+
+### Configuration
+- **`.env`**: Environment variables (Supabase credentials, JWT secret)
+- **`requirements.txt`**: All dependencies including sentence-transformers, torch
+
+---
+
+
 
 ## Testing Guide
 
@@ -1321,7 +2515,283 @@ async def debug_similarity(video_uuid_1: str, video_uuid_2: str):
 
 ---
 
-**Last Updated**: March 26, 2026
-**Implementation Status**: ✅ Complete
+## Architecture Overview
+
+### System Components
+
+1. **Embedding Layer** (`app/core/embedding_service.py`)
+   - Model: sentence-transformers/bge-m3
+   - Dimension: 1024
+   - Optimization: PyTorch int8 dynamic quantization (73% memory reduction)
+   - Load time: 3-5 seconds (one-time at startup)
+   - Memory: ~600MB (vs 2.27GB unquantized)
+   - Fallback: Auto-switches to float16 if int8 fails
+
+2. **Vector Search** (`app/core/faiss_manager.py`)
+   - Index type: FAISS IndexFlatIP (Inner Product for normalized vectors)
+   - Precomputed on startup from database embeddings
+   - Supports fast similarity search: O(log n)
+   - Caches uuid→embedding mapping for instant lookup
+   - Zero-latency access to pre-computed vectors
+
+3. **Recommendation Engine** (`app/core/recommendation.py`)
+   - 3-phase strategy: Cold Start → Warm-up → Personalized
+   - Taste vector: Weighted mean of watched video embeddings
+   - Time decay: 14-day half-life for older interactions
+   - Category boosting: 1.0x-1.5x for underrepresented interests
+
+4. **Database Access** (`app/db.py`)
+   - Async HTTP client to Supabase REST API
+   - Parallel batch queries with asyncio.gather()
+   - Connection pooling via httpx.AsyncClient
+   - JWT authentication for service-level access
+
+### Request Flow Diagrams
+
+**Search Flow**:
+```
+Client → /search?q=query&limit=25
+        ↓
+Embed Query (bgem3 model)
+        ↓
+FAISS Search (K*2=50 candidates)
+        ↓
+Fetch Metadata (50 videos from DB)
+        ↓
+Hybrid Score (semantic + keyword + category)
+        ↓
+Re-rank and Return Top 25
+```
+
+**Recommendation Flow**:
+```
+Client → /recommend?video_id=xyz&limit=15
+        ↓
+Lookup Reference Embedding (cached)
+        ↓
+Get Reference Metadata (title, category)
+        ↓
+FAISS Search (K*2+buffer=30+ candidates)
+        ↓
+Filter (remove reference video itself)
+        ↓
+Fetch Metadata (candidates from DB)
+        ↓
+Hybrid Score (semantic + keywords + category affinity)
+        ↓
+Re-rank and Return Top 15
+```
+
+**Lazy Loading Flow**:
+```
+/reload-search OR /reload-recommend
+        ↓
+Same logic as initial request
+        ↓
+Exclude all previous results (set difference)
+        ↓
+Get next batch from filtered space
+        ↓
+Return unique new results
+```
+
+### Performance Characteristics
+
+| Endpoint | Latency | Bottleneck | Scalability |
+|----------|---------|------------|-------------|
+| `/search` | 300-400ms | FAISS search + metadata fetch | Excellent (linear with K) |
+| `/reload-search` | 250-350ms | FAISS search + filtering | Excellent (set ops are fast) |
+| `/recommend` | 200-300ms | Metadata fetch | Very Good (no embedding needed) |
+| `/reload-recommend` | 150-250ms | Filtering | Excellent (cached embedding) |
+| `/feed` Phase 1 | ~200ms | RPC calls | Very Good |
+| `/feed` Phase 2 | ~400ms | Embedding + RPC | Good |
+| `/feed` Phase 3 | ~800ms | Country affinity | Fair (optimization opportunity) |
+
+### Database Schema for Search Feature
+
+Extended from base schema:
+
+```sql
+-- Embeddings table (from videos)
+ALTER TABLE videos ADD COLUMN embedding vector(1024);
+CREATE INDEX ON videos USING ivfflat (embedding vector_ip_ops);
+
+-- Watch history (for taste vector)
+CREATE TABLE watch_history (
+    id UUID PRIMARY KEY,
+    user_id UUID,
+    guest_uuid TEXT,
+    video_id UUID REFERENCES videos(id),
+    watch_duration_seconds INT,
+    watch_percentage DECIMAL,
+    started_at TIMESTAMPTZ,
+    ended_at TIMESTAMPTZ
+);
+
+-- Liked videos (for taste vector in future)
+CREATE TABLE liked_videos (
+    id UUID PRIMARY KEY,
+    user_id UUID,
+    video_id UUID REFERENCES videos(id),
+    created_at TIMESTAMPTZ
+);
+```
+
+### Supported Regions & Categories
+
+**Regions** (10 countries):
+US, GB (United Kingdom), JP (Japan), DE (Germany), FR (France), IN (India), KR (South Korea), MX (Mexico), RU (Russia), CA (Canada)
+
+**Categories** (16 total):
+1. Sports
+2. Music
+3. People & Blogs
+4. Entertainment
+5. News & Politics
+6. Howto & Style
+7. Travel & Events
+8. Shows
+9. Nonprofits & Activism
+10. Autos & Vehicles
+11. Gaming
+12. Comedy
+13. Film & Animation
+14. Education
+15. Pets & Animals
+16. Science & Technology
+
+---
+
+## Error Handling Expanded
+
+### Network Errors
+```
+502 Bad Gateway: FAISS index not initialized
+→ Solution: Ensure backend startup completes, check app/core/faiss_manager.py
+
+504 Gateway Timeout: Supabase taking >30s to respond
+→ Solution: Check Supabase status, verify RPC functions exist
+```
+
+### Model Errors
+```
+RuntimeError: "Embedding model not loaded"
+→ Solution: Check embedding_service.load_model() is called in main.py lifespan
+
+ValueError: "Query embedding has zero norm"
+→ Solution: Empty or whitespace-only query, validates input length
+```
+
+### FAISS Errors
+```
+Exception: "FAISS index dimension mismatch"
+→ Solution: Ensure embeddings are 1024-dim after bge-m3
+
+Exception: "Zero results from FAISS"
+→ Solution: Database embeddings may be corrupt, regenerate from notebook
+```
+
+### Database Errors
+```
+422 Validation Error: Invalid UUID format
+→ Solution: Validate UUID format before sending to API
+
+404 Not Found: Video UUID doesn't exist
+→ Solution: Verify video_id matches videos.id (not videos.video_id)
+
+FK Constraint: Inserting invalid video_id to watch_history
+→ Solution: Use videos.id (UUID), not YouTube video ID
+```
+
+---
+
+## Caching Strategy
+
+### What's Cached
+```python
+# In FAISS manager (persistent for lifetime of server)
+UUID_TO_EMBEDDING = {}  # {uuid: np.array(1024,)}
+FAISS_INDEX = None      # Pre-built from all videos
+
+# In memory during request
+query_embedding = None  # Computed once per /search
+reference_metadata = None  # Fetched once per /recommend
+```
+
+### What's NOT Cached (Computed Fresh)
+- Query embeddings (re-embed for each /search)
+- Re-ranking calculations (semantic scores change slightly with query)
+- Metadata fetches (always hit DB for freshest data)
+
+### Frontend Caching
+```javascript
+// What to cache in localStorage
+{
+  "guest_uuid": "string",              // Persist across sessions
+  "watched_video_ids": ["uuid", ...],  // For taste vector
+  "search_history": ["query", ...],    // For UX (optional)
+  "auth_token": "jwt_token"            // From Supabase
+}
+
+// What NOT to cache
+// - Feed results (stale after 1 hour)
+// - Search results > 10 items (large serialization)
+// - Recommendation results (change based on interaction)
+```
+
+---
+
+## Testing Strategy
+
+### Unit Tests (for backend)
+Would test:
+- Embedding normalization (norm = 1.0)
+- FAISS search exactness (top-1 is highest similarity)
+- Keyword matching logic (counting works correctly)
+- Category detection (query → category intent)
+- Hybrid scoring (weights sum to 1.0)
+
+### Integration Tests (full flow)
+```bash
+# Search flow
+POST /search?q=gaming&limit=10 → Verify 10 results, all Gaming-related or gaming-keyword
+
+# Recommendation flow
+POST /recommend?video_id=X&limit=10 → Verify 10 results, none are video X
+
+# Lazy loading flow
+POST /search → 25 results
+POST /reload-search with 25 excluded → 25 NEW results (no duplication)
+POST /reload-search with 50 excluded → 25 MORE NEW results
+```
+
+### Load Tests (performance validation)
+- Single query: measure latency bands (100ms, 200ms, 500ms)
+- Concurrent requests: 10 parallel /search calls
+- Large exclusion sets: 1000+ excluded IDs in /reload-search
+- Memory usage: peak during FAISS initialization
+
+---
+
+## Production Checklist
+
+- [ ] All embeddings generated and uploaded (24,499 videos with 1024-dim vectors)
+- [ ] FAISS index pre-computed and loaded at startup
+- [ ] Embedding model loaded at startup (or returns clear error)
+- [ ] All RPC functions exist in Supabase (search_videos, get_trending, etc.)
+- [ ] JWT verification configured correctly
+- [ ] CORS configured for frontend domain
+- [ ] Rate limiting configured if deployed publicly
+- [ ] Error logging and monitoring (Sentry, CloudWatch, etc.)
+- [ ] Database backups configured
+- [ ] Embedding updates scheduled (if new videos added weekly)
+- [ ] Performance monitoring (API latency, error rates)
+- [ ] Documentation deployed and accessible
+
+---
+
+**Last Updated**: March 27, 2026
+**Search & Recommendations**: ✅ Complete (v1.0)
+**Lazy Loading**: ✅ Implemented
+**Frontend Guide**: ✅ Comprehensive
 **Testing Status**: 🧪 Ready for Postman
-**Documentation Status**: 📚 Comprehensive
