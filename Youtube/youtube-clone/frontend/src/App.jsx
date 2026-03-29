@@ -1,7 +1,7 @@
-import React, { useState } from "react";
-import { HashRouter as Router, Routes, Route } from "react-router-dom";
+import React, { useState, useEffect } from "react";
+import { HashRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
 import { features } from "./config";
-import { AuthProvider } from "./context";
+import { AuthProvider, useAuth } from "./context";
 import { Navbar, Sidebar } from "./components";
 import { SignIn } from "./pages";
 
@@ -69,11 +69,8 @@ const AppLayout = ({ sidebarCollapsed, toggleSidebar }) => {
               />
             )}
 
-            {/* ── 404 fallback ── */}
-            <Route
-              path="*"
-              element={<PlaceholderPage title="Page Not Found" description="This page isn't available. Try searching for something else." />}
-            />
+            {/* ── 404 / OAuth callback fallback ── */}
+            <Route path="*" element={<NotFoundOrAuthCallback />} />
           </Routes>
         </React.Suspense>
       </main>
@@ -118,6 +115,39 @@ const PageLoader = () => (
     <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
   </div>
 );
+
+/**
+ * Handles the Supabase OAuth callback with HashRouter.
+ * After Google sign-in, Supabase redirects back with tokens in the URL hash
+ * (e.g. #access_token=...). HashRouter treats this as route "access_token=..."
+ * and lands here. Once Supabase detects the session and sets isAuthenticated=true,
+ * we redirect to home. Non-authenticated 404s show the normal placeholder.
+ */
+const NotFoundOrAuthCallback = () => {
+  const navigate = useNavigate();
+  const { isAuthenticated, loading } = useAuth();
+
+  useEffect(() => {
+    const hash = window.location.hash;
+    const search = window.location.search;
+
+    // Check for OAuth error in either query string or hash fragment
+    const errorSource = search.includes("error=") ? search : hash.includes("error=") ? hash : null;
+    if (errorSource) {
+      const params = new URLSearchParams(errorSource.replace(/^[#?]/, ""));
+      const description = params.get("error_description") || params.get("error") || "Sign in failed";
+      navigate(`/signin?auth_error=${encodeURIComponent(description)}`, { replace: true });
+      return;
+    }
+
+    // Successful OAuth callback — wait for Supabase to set session then go home
+    if (!loading && isAuthenticated) {
+      navigate("/", { replace: true });
+    }
+  }, [isAuthenticated, loading, navigate]);
+
+  return null;
+};
 
 /* Simple placeholder for routes not yet fully implemented */
 const PlaceholderPage = ({ title, description }) => (

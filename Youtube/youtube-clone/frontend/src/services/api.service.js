@@ -21,7 +21,19 @@ class ApiService {
     };
 
     const response = await fetch(url, config);
-    return response;
+
+    if (!response.ok) {
+      let errorDetail = response.statusText;
+      try {
+        const errBody = await response.json();
+        errorDetail = errBody.detail || errorDetail;
+      } catch (_) {}
+      throw new Error(`API ${response.status}: ${errorDetail}`);
+    }
+
+    // Return parsed JSON (or null for 204 No Content)
+    if (response.status === 204) return null;
+    return response.json();
   }
 
   async get(endpoint, options = {}) {
@@ -44,8 +56,12 @@ class ApiService {
     });
   }
 
-  async delete(endpoint, options = {}) {
-    return this.request(endpoint, { ...options, method: 'DELETE' });
+  async delete(endpoint, data, options = {}) {
+    return this.request(endpoint, {
+      ...options,
+      method: 'DELETE',
+      body: data ? JSON.stringify(data) : undefined,
+    });
   }
 
   // Create authenticated request with token
@@ -66,8 +82,8 @@ class ApiService {
           ...options,
           headers: { ...options.headers, Authorization: `Bearer ${token}` },
         }),
-      delete: (endpoint, options = {}) =>
-        this.delete(endpoint, {
+      delete: (endpoint, data, options = {}) =>
+        this.delete(endpoint, data, {
           ...options,
           headers: { ...options.headers, Authorization: `Bearer ${token}` },
         }),

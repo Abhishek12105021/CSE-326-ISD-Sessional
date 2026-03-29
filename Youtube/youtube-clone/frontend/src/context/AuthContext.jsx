@@ -115,6 +115,11 @@ export function AuthProvider({ children }) {
     return authService.updateProfile(session.access_token, updates);
   };
 
+  // Get watched video UUIDs from localStorage (used for guest feed personalization)
+  const getWatchedVideoIds = useCallback(() => {
+    return guestStorage.getWatchHistory().map(v => v.videoId);
+  }, []);
+
   // Update region for both guest and authenticated users
   const updateRegion = useCallback(async (newRegion) => {
     // Always store in localStorage for persistence (works for both guest and auth users)
@@ -147,6 +152,7 @@ export function AuthProvider({ children }) {
     updateProfile,
     updateRegion,
     authFetch,
+    getWatchedVideoIds,
   };
 
   return (
