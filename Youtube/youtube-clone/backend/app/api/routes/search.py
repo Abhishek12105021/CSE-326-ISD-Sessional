@@ -7,6 +7,7 @@ Endpoints:
 - POST /search?q=query&limit=50  → Search by text query
 - POST /recommend?video_id=uuid&limit=15 → Find similar videos
 - POST /reload-search → Lazy load more search results with pagination
+- POST /reload-search-by-category → Lazy load category-filtered search results
 """
 from fastapi import APIRouter, Query, HTTPException, status
 import numpy as np
@@ -15,8 +16,8 @@ from typing import Optional
 import time
 
 from app.core import embedding_service, faiss_manager
-from app.db import get_videos_metadata_by_uuids
-from app.schemas.feed import VideoResponse, ChannelInfo, SearchReloadRequest, ReloadRecommendRequest
+from app.db import get_videos_metadata_by_uuids, get_videos_by_categories
+from app.schemas.feed import VideoResponse, ChannelInfo, SearchReloadRequest, ReloadRecommendRequest, CategorySearchRequest
 from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
 
 router = APIRouter()
@@ -926,4 +927,126 @@ async def reload_recommendations(request: ReloadRecommendRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Recommendation reload failed"
+        )
+
+
+@router.get("/search-by-category")
+async def search_by_category(request: CategorySearchRequest):
+    """
+    Fetch videos filtered by one or more categories, ordered by velocity score then views.
+
+    Used for both initial load and infinite-scroll pagination:
+    - Initial load: send categories, empty excluded_video_ids
+    - Pagination:   send categories + all UUIDs already shown in excluded_video_ids
+
+    REQUEST:
+    {
+        "categories": ["Music", "Gaming"],
+        "excluded_video_ids": [],   // grow this list for pagination
+        "limit": 30
+    }
+
+    RESPONSE:
+    {
+        "videos": [VideoResponse, ...],
+        "categories": ["Music", "Gaming"],
+        "total": 30
+    }
+    """
+    if not request.categories:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one category is required"
+        )
+
+    try:
+        print(f"[CATEGORY SEARCH] categories={request.categories}, excluded={len(request.excluded_video_ids)}")
+
+        videos_data = await get_videos_by_categories(
+            categories=request.categories,
+            excluded_ids=request.excluded_video_ids if request.excluded_video_ids else None,
+            limit=request.limit,
+        )
+
+        video_responses = [transform_video(v) for v in videos_data]
+
+        return {
+            "videos": video_responses,
+            "categories": request.categories,
+            "total": len(video_responses),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[CATEGORY SEARCH ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Category search failed"
+        )
+
+
+@router.get("/reload-search-by-category")
+async def reload_search_by_category(request: CategorySearchRequest):
+    """
+    Lazy loading endpoint for category-based search results.
+
+    Works like `/search-by-category` but is optimized for infinite scroll by
+    excluding all previously shown video IDs and returning the next batch.
+
+    REQUEST:
+    {
+        "categories": ["Music", "Gaming"],
+        "excluded_video_ids": ["uuid1", "uuid2", ...],
+        "limit": 30
+    }
+
+    RESPONSE:
+    {
+        "videos": [VideoResponse, ...],
+        "categories": ["Music", "Gaming"],
+        "total": 30,
+        "has_more": true
+    }
+    """
+    if not request.categories:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one category is required"
+        )
+
+    try:
+        excluded_ids = request.excluded_video_ids if request.excluded_video_ids else []
+        limit = min(request.limit, 50)  # Cap at 50 per reload
+
+        print(f"\n{'#'*70}")
+        print(f"[RELOAD-CATEGORY] categories={request.categories}, limit={limit}")
+        print(f"[RELOAD-CATEGORY] excluding {len(excluded_ids)} already-shown videos")
+        print(f"{'#'*70}")
+
+        # Fetch one extra record so frontend can know if additional pages exist.
+        videos_data = await get_videos_by_categories(
+            categories=request.categories,
+            excluded_ids=excluded_ids,
+            limit=limit + 1,
+        )
+
+        has_more = len(videos_data) > limit
+        current_batch = videos_data[:limit]
+        video_responses = [transform_video(v) for v in current_batch]
+
+        return {
+            "videos": video_responses,
+            "categories": request.categories,
+            "total": len(video_responses),
+            "has_more": has_more,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[RELOAD-CATEGORY ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Category reload failed"
         )

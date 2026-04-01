@@ -535,6 +535,48 @@ async def delete_watch_history(watch_id: str) -> bool:
             raise
 
 
+async def get_videos_by_categories(
+    categories: list[str],
+    excluded_ids: list[str] = None,
+    limit: int = 30
+) -> list[dict]:
+    """
+    Fetch videos filtered by one or more category names, ordered by velocity then views.
+
+    SQL equivalent:
+    SELECT id, video_id, title, ...
+    FROM videos
+    WHERE category_name IN (categories)
+      AND id NOT IN (excluded_ids)
+    ORDER BY velocity_score DESC NULLS LAST, views DESC
+    LIMIT limit
+    """
+    if not categories:
+        return []
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        # Quote each category name so values with spaces/& are handled correctly
+        quoted_cats = ",".join(f'"{c}"' for c in categories)
+
+        params = {
+            "select": "id,video_id,title,thumbnail_link,channel_title,views,likes,publish_time,category_name,velocity_score",
+            "category_name": f"in.({quoted_cats})",
+            "order": "velocity_score.desc.nullslast,views.desc",
+            "limit": str(limit),
+        }
+
+        if excluded_ids:
+            params["id"] = f"not.in.({','.join(excluded_ids)})"
+
+        response = await client.get(
+            f"{REST_URL}/videos",
+            headers=HEADERS,
+            params=params
+        )
+        response.raise_for_status()
+        return response.json()
+
+
 async def get_unique_categories() -> list[str]:
     """
     Fetch distinct category names.
