@@ -17,6 +17,7 @@ class VideoResponse(BaseModel):
     channel: ChannelInfo
     views: str
     timestamp: str
+    publish_time_raw: Optional[str] = None
     duration: str
     category: str
     velocity_score: Optional[float] = None

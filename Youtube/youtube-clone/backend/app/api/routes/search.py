@@ -43,6 +43,7 @@ def transform_video(video: dict) -> VideoResponse:
         ),
         views=format_views(video.get("views", 0)),
         timestamp=format_timestamp(video.get("publish_time", "")),
+        publish_time_raw=video.get("publish_time", ""),
         duration="10:00",
         category=video.get("category_name", "Unknown"),
         velocity_score=video.get("velocity_score")

@@ -417,9 +417,9 @@ async def insert_watch_history(
     If an entry already exists for this user+video, resets it for the new session.
     Returns watch_id UUID for later UPDATE.
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
 
-    now = datetime.utcnow().isoformat()
+    now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         # Look up existing entry for this user+video combination
@@ -483,12 +483,12 @@ async def update_watch_history(watch_id: str, watch_duration_seconds: int) -> bo
     Returns:
         True if successful, False otherwise
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     async with httpx.AsyncClient(timeout=30.0) as client:
         payload = {
             "watch_duration_seconds": watch_duration_seconds,
-            "ended_at": datetime.utcnow().isoformat()
+            "ended_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         }
 
         try:
