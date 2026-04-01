@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { VideoCard } from "../../components";
-import { shortsData } from "../../data/sampleData";
-import { SiYoutubeshorts } from "react-icons/si";
+import { AiOutlineDown } from "react-icons/ai";
 import { features } from "../../config";
 import { useAuth } from "../../context";
 import { apiService } from "../../services";
@@ -33,10 +32,16 @@ const Home = () => {
   const [selectedRegions, setSelectedRegions] = useState([]);
   const [appliedRegions, setAppliedRegions] = useState([]);
   const [isRegionDropdownOpen, setIsRegionDropdownOpen] = useState(false);
+  const [regionDropdownPosition, setRegionDropdownPosition] = useState({
+    top: 0,
+    left: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const shownIds = useRef(new Set());
+  const regionTriggerRef = useRef(null);
+  const regionDropdownRef = useRef(null);
   const LIMIT = 30;
 
   const dbCategories = categories.filter((cat) => cat !== "All");
@@ -46,6 +51,8 @@ const Home = () => {
     dbCategories.every((cat) => selectedCategories.includes(cat));
   const hasAppliedCategoryFilter = appliedCategories.length > 0;
   const hasAppliedRegionFilter = appliedRegions.length > 0;
+  const hasAnyAppliedFilter =
+    hasAppliedCategoryFilter || hasAppliedRegionFilter;
 
   // Fetch categories once on mount
   useEffect(() => {
@@ -106,11 +113,64 @@ const Home = () => {
     fetchFeed();
   }, [fetchFeed]);
 
+  const updateRegionDropdownPosition = useCallback(() => {
+    const trigger = regionTriggerRef.current;
+    if (!trigger) return;
+
+    const rect = trigger.getBoundingClientRect();
+    const estimatedWidth = 420;
+    const viewportPadding = 12;
+    const maxLeft = window.innerWidth - estimatedWidth - viewportPadding;
+    const safeLeft = Math.max(viewportPadding, Math.min(rect.left, maxLeft));
+
+    setRegionDropdownPosition({
+      top: rect.bottom + 10,
+      left: safeLeft,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isRegionDropdownOpen) return;
+
+    updateRegionDropdownPosition();
+
+    const handleViewportChange = () => updateRegionDropdownPosition();
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
+
+    return () => {
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
+    };
+  }, [isRegionDropdownOpen, updateRegionDropdownPosition]);
+
+  useEffect(() => {
+    if (!isRegionDropdownOpen) return;
+
+    const handleOutsideClick = (event) => {
+      const target = event.target;
+      if (
+        regionDropdownRef.current?.contains(target) ||
+        regionTriggerRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setIsRegionDropdownOpen(false);
+    };
+
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, [isRegionDropdownOpen]);
+
   const toggleCategorySelection = useCallback(
     (category) => {
       setSelectedCategories((prev) => {
         if (category === "All") {
-          return dbCategories;
+          const isAllSelected =
+            dbCategories.length > 0 &&
+            prev.length === dbCategories.length &&
+            dbCategories.every((cat) => prev.includes(cat));
+          return isAllSelected ? [] : dbCategories;
         }
 
         if (prev.includes(category)) {
@@ -196,6 +256,11 @@ const Home = () => {
     }
   }, [selectedRegions, LIMIT]);
 
+  const loadPersonalizedFeed = useCallback(async () => {
+    setIsRegionDropdownOpen(false);
+    await fetchFeed();
+  }, [fetchFeed]);
+
   // Load more videos (infinite scroll)
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
@@ -276,12 +341,6 @@ const Home = () => {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [loadMore]);
 
-  const showShorts =
-    features.shorts &&
-    features.shortsSection &&
-    !hasAppliedCategoryFilter &&
-    !hasAppliedRegionFilter;
-
   if (loading) {
     return (
       <div className="home">
@@ -299,6 +358,15 @@ const Home = () => {
       {features.categoryChips && (
         <>
           <div className="category-bar">
+            <button
+              ref={regionTriggerRef}
+              className={`category-pill region-dropdown-trigger ${isRegionDropdownOpen ? "region-dropdown-trigger--open" : ""}`}
+              onClick={() => setIsRegionDropdownOpen((prev) => !prev)}
+            >
+              <span>Regions ({selectedRegions.length})</span>
+              <AiOutlineDown className="region-dropdown-trigger__icon" />
+            </button>
+
             {categories.map((cat) => (
               <button
                 key={cat}
@@ -339,38 +407,52 @@ const Home = () => {
             )}
           </div>
 
-          <div className="region-filter-bar">
-            <button
-              className={`category-pill region-dropdown-trigger ${isRegionDropdownOpen ? "category-pill--active" : ""}`}
-              onClick={() => setIsRegionDropdownOpen((prev) => !prev)}
+          {isRegionDropdownOpen && (
+            <div
+              ref={regionDropdownRef}
+              className="region-dropdown"
+              style={{
+                top: `${regionDropdownPosition.top}px`,
+                left: `${regionDropdownPosition.left}px`,
+              }}
             >
-              Regions ({selectedRegions.length})
-            </button>
+              <div className="region-dropdown__header">
+                <h4>Filter By Region</h4>
+                <span>{selectedRegions.length} selected</span>
+              </div>
 
-            {isRegionDropdownOpen && (
-              <div className="region-dropdown">
-                <div className="region-dropdown__list">
-                  {regions.map((regionCode) => (
-                    <label key={regionCode} className="region-option">
-                      <input
-                        type="checkbox"
-                        checked={selectedRegions.includes(regionCode)}
-                        onChange={() => toggleRegionSelection(regionCode)}
-                      />
-                      <span>{regionCode}</span>
-                    </label>
-                  ))}
-                </div>
+              <div className="region-dropdown__list">
+                {regions.map((regionCode) => (
+                  <button
+                    key={regionCode}
+                    type="button"
+                    className={`region-option ${selectedRegions.includes(regionCode) ? "region-option--selected" : ""}`}
+                    onClick={() => toggleRegionSelection(regionCode)}
+                  >
+                    {regionCode}
+                  </button>
+                ))}
+              </div>
+
+              <div className="region-dropdown__actions">
                 <button
-                  className="category-pill category-pill--active category-pill--confirm region-dropdown__confirm"
+                  type="button"
+                  className="region-dropdown__clear"
+                  onClick={() => setSelectedRegions([])}
+                >
+                  Clear
+                </button>
+                <button
+                  type="button"
+                  className="region-dropdown__confirm"
                   onClick={applyRegionSelection}
                   disabled={selectedRegions.length === 0}
                 >
-                  Confirm Regions
+                  Confirm
                 </button>
               </div>
-            )}
-          </div>
+            </div>
+          )}
         </>
       )}
 
@@ -386,33 +468,15 @@ const Home = () => {
         </div>
       )}
 
-      {/* Shorts Section */}
-      {showShorts && (
-        <>
-          <div className="shorts-section">
-            <div className="shorts-section__header">
-              <SiYoutubeshorts className="shorts-section__icon" />
-              <h2 className="shorts-section__title">Shorts</h2>
-            </div>
-            <div className="shorts-section__grid">
-              {shortsData.map((short) => (
-                <div key={short.id} className="shorts-card">
-                  <img
-                    className="shorts-card__thumbnail"
-                    src={short.thumbnail}
-                    alt={short.title}
-                    loading="lazy"
-                  />
-                  <div className="shorts-card__overlay">
-                    <p className="shorts-card__title">{short.title}</p>
-                    <p className="shorts-card__views">{short.views} views</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <hr className="section-divider" />
-        </>
+      {hasAnyAppliedFilter && (
+        <div className="home__filter-actions">
+          <button
+            className="home__reset-feed-btn"
+            onClick={loadPersonalizedFeed}
+          >
+            Back to Default Feed
+          </button>
+        </div>
       )}
 
       {/* Video Grid */}

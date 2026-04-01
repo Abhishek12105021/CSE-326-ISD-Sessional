@@ -10,7 +10,6 @@ import { BsYoutube, BsMic } from "react-icons/bs";
 import { FaUserCircle } from "react-icons/fa";
 import { useAuth } from "../../context";
 import { useClickOutside } from "../../hooks";
-import { RegionSelector } from "../../components";
 import "./Navbar.css";
 
 const Navbar = ({ toggleSidebar }) => {
@@ -18,7 +17,7 @@ const Navbar = ({ toggleSidebar }) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const navigate = useNavigate();
   const userMenuRef = useRef(null);
-  const { user, isAuthenticated, signOut, loading, region, updateRegion } = useAuth();
+  const { user, isAuthenticated, signOut, loading } = useAuth();
 
   // Close menu on click outside
   useClickOutside(userMenuRef, () => setShowUserMenu(false), showUserMenu);
@@ -46,7 +45,9 @@ const Navbar = ({ toggleSidebar }) => {
   };
 
   const getUserName = () => {
-    return user?.user_metadata?.full_name || user?.email?.split("@")[0] || "User";
+    return (
+      user?.user_metadata?.full_name || user?.email?.split("@")[0] || "User"
+    );
   };
 
   return (
@@ -89,12 +90,6 @@ const Navbar = ({ toggleSidebar }) => {
           <AiOutlineBell />
           <span className="navbar__notification-count">9+</span>
         </button>
-
-        <RegionSelector
-          currentRegion={region}
-          onRegionChange={updateRegion}
-          disabled={loading}
-        />
 
         {loading ? (
           <div className="navbar__avatar-loading" />
