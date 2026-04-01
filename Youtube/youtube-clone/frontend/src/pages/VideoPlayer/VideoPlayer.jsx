@@ -39,9 +39,22 @@ const VideoPlayer = () => {
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [expandedReplies, setExpandedReplies] = useState({});
 
+  // watchId: null = not started | 'pending' = INSERT in flight | uuid = INSERT done
+  // watchVideoId: tracks which video the current watchId belongs to (guards fast navigation)
   const watchId = useRef(null);
+  const watchVideoId = useRef(null);
   const watchStartTime = useRef(Date.now());
   const shownRecIds = useRef(new Set());
+
+  // Refs so cleanup always reads fresh auth state (avoids stale closures)
+  const sessionRef = useRef(session);
+  const isAuthRef = useRef(isAuthenticated);
+  const guestIdRef = useRef(guestId);
+  useEffect(() => {
+    sessionRef.current = session;
+    isAuthRef.current = isAuthenticated;
+    guestIdRef.current = guestId;
+  });
 
   const authClient = isAuthenticated && session?.access_token
     ? apiService.withAuth(session.access_token)
@@ -50,42 +63,98 @@ const VideoPlayer = () => {
   // Fetch video metadata
   useEffect(() => {
     setLoading(true);
+    setVideo(null);
     apiService.post(API_ENDPOINTS.VIDEO_GET, { video_uuid: id })
-      .then(data => {
-        setVideo(data);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error("[VideoPlayer] Failed to fetch video:", err);
-        setLoading(false);
-      });
+      .then(data => { setVideo(data); setLoading(false); })
+      .catch(err => { console.error("[VideoPlayer] Failed to fetch video:", err); setLoading(false); });
   }, [id]);
 
-  // Start watch tracking when video loads
+  // Watch tracking: INSERT on video start, UPDATE on leave.
+  //
+  // WHY 'pending' sentinel:
+  //   React StrictMode mounts → cleanups → remounts effects synchronously.
+  //   The INSERT is async (fetch), so it hasn't resolved yet when StrictMode's
+  //   cleanup fires. Without the sentinel, Mount 2 sees watchId=null and fires
+  //   a second INSERT → two rows in the DB.
+  //
+  //   By setting watchId='pending' SYNCHRONOUSLY before the async call:
+  //   - Mount 1 sets 'pending', starts INSERT async
+  //   - StrictMode cleanup sees 'pending' → skips UPDATE (INSERT not done yet)
+  //   - Mount 2 sees watchVideoId===id && watchId!==null → skips INSERT entirely
+  //   - INSERT resolves → watchId = real uuid
+  //   - Real navigation cleanup → watchId is real uuid → sends UPDATE ✓
   useEffect(() => {
-    if (!video) return;
+    if (!id) return;
+
+    // StrictMode re-mount guard: INSERT already initiated for THIS video — skip
+    if (watchVideoId.current === id && watchId.current !== null) {
+      return () => {
+        if (!watchId.current || watchId.current === 'pending') return;
+        const duration = Math.floor((Date.now() - watchStartTime.current) / 1000);
+        const payload = { video_uuid: id, watch_id: watchId.current, watch_duration_seconds: duration };
+        if (isAuthRef.current && sessionRef.current?.access_token) {
+          apiService.withAuth(sessionRef.current.access_token).post(API_ENDPOINTS.WATCH, payload).catch(() => {});
+        } else {
+          apiService.post(API_ENDPOINTS.GUEST_WATCH, { ...payload, guest_uuid: guestIdRef.current }).catch(() => {});
+        }
+        watchId.current = null;
+        watchVideoId.current = null;
+        localStorage.removeItem('yt_current_watch');
+      };
+    }
+
+    // New video — set sentinel SYNCHRONOUSLY before async INSERT
+    watchVideoId.current = id;
+    watchId.current = 'pending';
     watchStartTime.current = Date.now();
 
-    const insertWatch = async () => {
+    (async () => {
       try {
         let data;
-        if (authClient) {
-          data = await authClient.post(API_ENDPOINTS.WATCH, { video_uuid: id });
+        if (isAuthRef.current && sessionRef.current?.access_token) {
+          data = await apiService.withAuth(sessionRef.current.access_token)
+            .post(API_ENDPOINTS.WATCH, { video_uuid: id });
         } else {
           data = await apiService.post(API_ENDPOINTS.GUEST_WATCH, {
             video_uuid: id,
-            guest_uuid: guestId,
+            guest_uuid: guestIdRef.current,
           });
         }
-        watchId.current = data?.watch_id;
+        // Guard: only commit if user hasn't already navigated to a different video
+        if (watchVideoId.current === id) {
+          watchId.current = data?.watch_id ?? null;
+          localStorage.setItem('yt_current_watch', JSON.stringify({
+            videoId: id,
+            watch_id: data?.watch_id,
+            startTime: watchStartTime.current,
+          }));
+        }
       } catch (err) {
         console.error("[VideoPlayer] Watch insert failed:", err);
+        if (watchVideoId.current === id) watchId.current = null;
       }
+    })();
+
+    return () => {
+      // StrictMode: watchId is 'pending' here (INSERT hasn't resolved) → no-op
+      // Real navigation: watchId is actual uuid → send UPDATE
+      if (!watchId.current || watchId.current === 'pending') return;
+      const duration = Math.floor((Date.now() - watchStartTime.current) / 1000);
+      const payload = { video_uuid: id, watch_id: watchId.current, watch_duration_seconds: duration };
+      if (isAuthRef.current && sessionRef.current?.access_token) {
+        apiService.withAuth(sessionRef.current.access_token).post(API_ENDPOINTS.WATCH, payload).catch(() => {});
+      } else {
+        apiService.post(API_ENDPOINTS.GUEST_WATCH, { ...payload, guest_uuid: guestIdRef.current }).catch(() => {});
+      }
+      watchId.current = null;
+      watchVideoId.current = null;
+      localStorage.removeItem('yt_current_watch');
     };
+  }, [id]);
 
-    insertWatch();
-
-    // Add to localStorage watch history
+  // Save to localStorage when metadata loads (separate from watch tracking)
+  useEffect(() => {
+    if (!video) return;
     guestStorage.addToWatchHistory({
       videoId: id,
       title: video.title,
@@ -93,21 +162,6 @@ const VideoPlayer = () => {
       thumbnail: video.thumbnail,
     });
   }, [video, id]);
-
-  // Update watch duration on unmount
-  useEffect(() => {
-    return () => {
-      if (!watchId.current) return;
-      const duration = Math.floor((Date.now() - watchStartTime.current) / 1000);
-      const payload = { video_uuid: id, watch_id: watchId.current, watch_duration_seconds: duration };
-
-      if (authClient) {
-        authClient.post(API_ENDPOINTS.WATCH, payload).catch(() => {});
-      } else {
-        apiService.post(API_ENDPOINTS.GUEST_WATCH, { ...payload, guest_uuid: guestId }).catch(() => {});
-      }
-    };
-  }, [id, guestId]);
 
   // Fetch recommendations
   useEffect(() => {

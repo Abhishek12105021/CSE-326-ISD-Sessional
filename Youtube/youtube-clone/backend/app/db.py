@@ -413,19 +413,51 @@ async def insert_watch_history(
     video_uuid: str  # videos.id (UUID), not video_id (YouTube ID)
 ) -> str:
     """
-    INSERT new watch_history row (duration=0).
+    UPSERT watch_history row (duration=0).
+    If an entry already exists for this user+video, resets it for the new session.
     Returns watch_id UUID for later UPDATE.
     """
     from datetime import datetime
 
+    now = datetime.utcnow().isoformat()
+
     async with httpx.AsyncClient(timeout=30.0) as client:
-        payload = {
-            "user_id": user_id,
-            "video_id": video_uuid,  # references videos.id
-            "watch_duration_seconds": 0,
-            "started_at": datetime.utcnow().isoformat()
-        }
+        # Look up existing entry for this user+video combination
+        if user_id:
+            lookup_params = {"user_id": f"eq.{user_id}", "video_id": f"eq.{video_uuid}", "select": "id", "limit": "1"}
+        else:
+            lookup_params = {"guest_uuid": f"eq.{guest_uuid}", "video_id": f"eq.{video_uuid}", "select": "id", "limit": "1"}
+
         try:
+            check_resp = await client.get(
+                f"{REST_URL}/watch_history",
+                headers=HEADERS,
+                params=lookup_params
+            )
+            existing = check_resp.json() if check_resp.status_code == 200 else []
+
+            if existing:
+                # Existing entry: reset for new watch session, reuse same watch_id
+                watch_id = existing[0]["id"]
+                await client.patch(
+                    f"{REST_URL}/watch_history",
+                    headers={**HEADERS, "Prefer": "return=minimal"},
+                    params={"id": f"eq.{watch_id}"},
+                    json={"watch_duration_seconds": 0, "started_at": now}
+                )
+                print(f"[DEBUG] insert_watch_history - reusing existing watch_id {watch_id} for re-watch")
+                return watch_id
+
+            # No existing entry: insert a new row
+            payload = {
+                "user_id": user_id,
+                "video_id": video_uuid,
+                "watch_duration_seconds": 0,
+                "started_at": now,
+            }
+            if guest_uuid:
+                payload["guest_uuid"] = guest_uuid
+
             response = await client.post(
                 f"{REST_URL}/watch_history",
                 headers={**HEADERS, "Prefer": "return=representation"},
@@ -434,10 +466,9 @@ async def insert_watch_history(
             response.raise_for_status()
             data = response.json()
             return data[0]["id"]
+
         except Exception as e:
-            print(f"[ERROR] insert_watch_history failed - payload: {payload}")
-            print(f"[ERROR] Response status: {response.status_code if 'response' in locals() else 'N/A'}")
-            print(f"[ERROR] Response text: {response.text if 'response' in locals() else 'N/A'}")
+            print(f"[ERROR] insert_watch_history failed - user_id: {user_id}, video_uuid: {video_uuid}, error: {e}")
             raise
 
 
