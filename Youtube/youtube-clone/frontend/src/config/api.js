@@ -32,6 +32,7 @@ export const API_ENDPOINTS = {
   LIKE: "/api/like",
   LIKES: "/api/likes",
   DISLIKE: "/api/dislike",
+  DISLIKES: "/api/dislikes",
 
   // Subscriptions
   SUBSCRIBE: "/api/subscribe",
