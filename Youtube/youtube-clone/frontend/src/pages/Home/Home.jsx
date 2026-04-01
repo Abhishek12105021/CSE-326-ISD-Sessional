@@ -9,20 +9,37 @@ import { API_ENDPOINTS } from "../../config";
 import "./Home.css";
 
 const Home = () => {
-  const { isAuthenticated, session, guestId, region, getWatchedVideoIds } = useAuth();
+  const { isAuthenticated, session, guestId, region, getWatchedVideoIds } =
+    useAuth();
 
   const [videos, setVideos] = useState([]);
   const [categories, setCategories] = useState(["All"]);
-  const [activeCategory, setActiveCategory] = useState("All");
+  const [selectedCategories, setSelectedCategories] = useState([]);
+  const [appliedCategories, setAppliedCategories] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const shownIds = useRef(new Set());
+  const LIMIT = 30;
+
+  const dbCategories = categories.filter((cat) => cat !== "All");
+  const allCategoriesSelected =
+    dbCategories.length > 0 &&
+    selectedCategories.length === dbCategories.length &&
+    dbCategories.every((cat) => selectedCategories.includes(cat));
+  const hasAppliedCategoryFilter = appliedCategories.length > 0;
 
   // Fetch categories once on mount
   useEffect(() => {
-    apiService.get(API_ENDPOINTS.CATEGORIES)
-      .then(data => setCategories(["All", ...(data.categories || [])]))
+    apiService
+      .get(API_ENDPOINTS.CATEGORIES)
+      .then((data) => {
+        const incoming = data?.categories || [];
+        const uniqueDbCategories = Array.from(
+          new Set(incoming.filter((cat) => cat && cat !== "All")),
+        );
+        setCategories(["All", ...uniqueDbCategories]);
+      })
       .catch(() => {}); // silently keep default "All" on failure
   }, []);
 
@@ -33,31 +50,80 @@ const Home = () => {
     try {
       let data;
       if (isAuthenticated && session?.access_token) {
-        data = await apiService.withAuth(session.access_token).get(
-          `${API_ENDPOINTS.FEED}?region=${region}&limit=30`
-        );
+        data = await apiService
+          .withAuth(session.access_token)
+          .get(`${API_ENDPOINTS.FEED}?region=${region}&limit=${LIMIT}`);
       } else {
         data = await apiService.post(API_ENDPOINTS.GUEST_FEED, {
           guest_uuid: guestId,
           region: region,
           watched_video_ids: getWatchedVideoIds(),
-          limit: 30,
+          limit: LIMIT,
         });
       }
       const fetched = data?.videos || [];
-      fetched.forEach(v => shownIds.current.add(v.id));
+      fetched.forEach((v) => shownIds.current.add(v.id));
       setVideos(fetched);
       setHasMore(fetched.length > 0);
+      setAppliedCategories([]);
+      setSelectedCategories([]);
     } catch (err) {
       console.error("[Home] Failed to fetch feed:", err);
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated, session, guestId, region, getWatchedVideoIds]);
+  }, [isAuthenticated, session, guestId, region, getWatchedVideoIds, LIMIT]);
 
   useEffect(() => {
     fetchFeed();
   }, [fetchFeed]);
+
+  const toggleCategorySelection = useCallback(
+    (category) => {
+      setSelectedCategories((prev) => {
+        if (category === "All") {
+          return dbCategories;
+        }
+
+        if (prev.includes(category)) {
+          return prev.filter((cat) => cat !== category);
+        }
+
+        return [...prev, category];
+      });
+    },
+    [dbCategories],
+  );
+
+  const removeCategorySelection = useCallback((category) => {
+    setSelectedCategories((prev) => prev.filter((cat) => cat !== category));
+  }, []);
+
+  const applyCategorySelection = useCallback(async () => {
+    if (selectedCategories.length === 0) return;
+
+    setLoading(true);
+    shownIds.current = new Set();
+
+    try {
+      const data = await apiService.post(API_ENDPOINTS.SEARCH_BY_CATEGORY, {
+        categories: selectedCategories,
+        excluded_video_ids: [],
+        limit: LIMIT,
+      });
+
+      const fetched = data?.videos || [];
+      fetched.forEach((v) => shownIds.current.add(v.id));
+
+      setVideos(fetched);
+      setAppliedCategories(selectedCategories);
+      setHasMore(fetched.length > 0);
+    } catch (err) {
+      console.error("[Home] Failed to apply category search:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [selectedCategories, LIMIT]);
 
   // Load more videos (infinite scroll)
   const loadMore = useCallback(async () => {
@@ -66,49 +132,70 @@ const Home = () => {
     try {
       const excludedIds = Array.from(shownIds.current);
       let data;
-      if (isAuthenticated && session?.access_token) {
-        data = await apiService.withAuth(session.access_token).post(
-          API_ENDPOINTS.FEED_RELOAD,
-          { excluded_video_ids: excludedIds, limit: 30 }
-        );
+
+      if (hasAppliedCategoryFilter) {
+        data = await apiService.post(API_ENDPOINTS.SEARCH_BY_CATEGORY_RELOAD, {
+          categories: appliedCategories,
+          excluded_video_ids: excludedIds,
+          limit: LIMIT,
+        });
+      } else if (isAuthenticated && session?.access_token) {
+        data = await apiService
+          .withAuth(session.access_token)
+          .post(API_ENDPOINTS.FEED_RELOAD, {
+            excluded_video_ids: excludedIds,
+            limit: LIMIT,
+          });
       } else {
         data = await apiService.post(API_ENDPOINTS.GUEST_RELOAD, {
           guest_uuid: guestId,
           region: region,
           watched_video_ids: getWatchedVideoIds(),
           excluded_video_ids: excludedIds,
-          limit: 30,
+          limit: LIMIT,
         });
       }
       const fetched = data?.videos || [];
-      fetched.forEach(v => shownIds.current.add(v.id));
-      setVideos(prev => [...prev, ...fetched]);
-      setHasMore(fetched.length > 0);
+      fetched.forEach((v) => shownIds.current.add(v.id));
+      setVideos((prev) => [...prev, ...fetched]);
+
+      if (hasAppliedCategoryFilter && typeof data?.has_more === "boolean") {
+        setHasMore(data.has_more);
+      } else {
+        setHasMore(fetched.length > 0);
+      }
     } catch (err) {
       console.error("[Home] Failed to load more:", err);
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, hasMore, isAuthenticated, session, guestId, region, getWatchedVideoIds]);
+  }, [
+    loadingMore,
+    hasMore,
+    hasAppliedCategoryFilter,
+    appliedCategories,
+    isAuthenticated,
+    session,
+    guestId,
+    region,
+    getWatchedVideoIds,
+    LIMIT,
+  ]);
 
   // Scroll listener for infinite scroll
   useEffect(() => {
     const handleScroll = () => {
       const nearBottom =
-        window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 600;
+        window.innerHeight + window.scrollY >=
+        document.documentElement.scrollHeight - 600;
       if (nearBottom) loadMore();
     };
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
   }, [loadMore]);
 
-  // Client-side category filter
-  const filteredVideos =
-    activeCategory === "All"
-      ? videos
-      : videos.filter((v) => v.category === activeCategory);
-
-  const showShorts = features.shorts && features.shortsSection && activeCategory === "All";
+  const showShorts =
+    features.shorts && features.shortsSection && !hasAppliedCategoryFilter;
 
   if (loading) {
     return (
@@ -129,12 +216,47 @@ const Home = () => {
           {categories.map((cat) => (
             <button
               key={cat}
-              className={`category-pill ${activeCategory === cat ? "category-pill--active" : ""}`}
-              onClick={() => setActiveCategory(cat)}
+              className={`category-pill ${
+                cat === "All"
+                  ? allCategoriesSelected
+                    ? "category-pill--active"
+                    : ""
+                  : selectedCategories.includes(cat)
+                    ? "category-pill--active"
+                    : ""
+              }`}
+              onClick={() => toggleCategorySelection(cat)}
             >
-              {cat}
+              <span className="category-pill__label">{cat}</span>
+              {cat !== "All" && selectedCategories.includes(cat) && (
+                <span
+                  className="category-pill__remove"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeCategorySelection(cat);
+                  }}
+                  aria-label={`Remove ${cat}`}
+                >
+                  ×
+                </span>
+              )}
             </button>
           ))}
+
+          {selectedCategories.length > 0 && (
+            <button
+              className="category-pill category-pill--active category-pill--confirm"
+              onClick={applyCategorySelection}
+            >
+              Confirm
+            </button>
+          )}
+        </div>
+      )}
+
+      {hasAppliedCategoryFilter && (
+        <div className="home__active-filter">
+          Showing categories: {appliedCategories.join(", ")}
         </div>
       )}
 
@@ -169,15 +291,23 @@ const Home = () => {
 
       {/* Video Grid */}
       <div className="home__video-grid">
-        {filteredVideos.map((video) => (
+        {videos.map((video) => (
           <VideoCard key={video.id} video={video} />
         ))}
       </div>
 
-      {filteredVideos.length === 0 && !loading && (
+      {videos.length === 0 && !loading && (
         <div style={{ textAlign: "center", padding: "48px", color: "#606060" }}>
-          <h3>No videos found for "{activeCategory}"</h3>
-          <p>Try selecting a different category</p>
+          <h3>
+            {hasAppliedCategoryFilter
+              ? `No videos found for ${appliedCategories.join(", ")}`
+              : "No videos found"}
+          </h3>
+          <p>
+            {hasAppliedCategoryFilter
+              ? "Try changing your selected categories"
+              : "Please refresh and try again"}
+          </p>
         </div>
       )}
 

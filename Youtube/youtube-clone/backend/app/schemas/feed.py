@@ -194,6 +194,13 @@ class CategorySearchRequest(BaseModel):
     limit: int = 30
 
 
+class RegionSearchRequest(BaseModel):
+    """Request to fetch/paginate videos filtered by one or more region codes"""
+    regions: list[str]  # e.g. ["US", "GB", "IN"]
+    excluded_video_ids: list[str] = []  # UUIDs already shown (for pagination)
+    limit: int = 30
+
+
 class ReloadRecommendRequest(BaseModel):
     """Request to reload recommendations with lazy loading"""
     video_id: str  # Reference video UUID

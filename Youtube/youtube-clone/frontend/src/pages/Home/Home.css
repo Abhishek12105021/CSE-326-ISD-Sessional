@@ -8,6 +8,37 @@
   gap: 16px 16px;
 }
 
+.category-pill__label {
+  pointer-events: none;
+}
+
+.category-pill__remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-left: 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.category-pill__remove:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.category-pill--confirm {
+  border: 1px solid #0f0f0f;
+}
+
+.home__active-filter {
+  margin: 8px 0 16px;
+  font-size: 13px;
+  color: #606060;
+}
+
 /* Shorts Section */
 .shorts-section {
   margin-bottom: 24px;

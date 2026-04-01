@@ -93,7 +93,9 @@ async def get_feed(
     # Step 1: Fetch user profile for region preference
     step_start = time.time()
     db_user = await get_user_by_id(user_id)
-    user_region = region or (db_user.get("region") if db_user else None) or "US"
+    user_region = region or "US"
+    print(f"[DEBUG] User profile fetched - user_id: {user_id}, region: {user_region}")
+    # print(f"[DEBUG] region available in query: {region}, user profile region: {db_user.get('region') if db_user else 'N/A'}")
     step_elapsed = (time.time() - step_start) * 1000
     print(f"[FEED Step 1/5] Fetched user profile, region={user_region} ({step_elapsed:.1f}ms)")
 
@@ -206,7 +208,7 @@ async def reload_feed(
     # Step 1: Fetch user profile for region preference
     step_start = time.time()
     db_user = await get_user_by_id(user_id)
-    user_region = region or (db_user.get("region") if db_user else None) or "US"
+    user_region = region or "US"
     step_elapsed = (time.time() - step_start) * 1000
     print(f"[RELOAD Step 1/5] Fetched user profile, region={user_region} ({step_elapsed:.1f}ms)")
 
