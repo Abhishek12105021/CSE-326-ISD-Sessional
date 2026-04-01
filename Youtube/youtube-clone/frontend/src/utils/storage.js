@@ -73,6 +73,14 @@ export const guestStorage = {
     return newHistory;
   },
 
+  updateWatchDuration(videoId, durationSeconds) {
+    const history = this.getWatchHistory();
+    const updated = history.map(v =>
+      v.videoId === videoId ? { ...v, watchDuration: durationSeconds } : v
+    );
+    localStorage.setItem(WATCH_HISTORY_KEY, JSON.stringify(updated));
+  },
+
   removeFromWatchHistory(videoId) {
     const history = this.getWatchHistory();
     const filtered = history.filter(v => v.videoId !== videoId);

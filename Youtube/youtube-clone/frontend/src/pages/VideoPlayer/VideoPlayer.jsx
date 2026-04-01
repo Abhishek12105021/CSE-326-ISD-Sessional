@@ -109,10 +109,15 @@ const VideoPlayer = () => {
     // StrictMode re-mount guard: INSERT already initiated for THIS video — skip
     if (watchVideoId.current === id && watchId.current !== null) {
       return () => {
-        if (!watchId.current || watchId.current === "pending") return;
         const duration = Math.floor(
           (Date.now() - watchStartTime.current) / 1000,
         );
+        // Always update localStorage for guest users — independent of INSERT state
+        if (!isAuthRef.current) {
+          guestStorage.updateWatchDuration(id, duration);
+        }
+        // Only send backend UPDATE if INSERT has resolved (watch_id is a real uuid)
+        if (!watchId.current || watchId.current === "pending") return;
         const payload = {
           video_uuid: id,
           watch_id: watchId.current,
@@ -174,10 +179,13 @@ const VideoPlayer = () => {
     })();
 
     return () => {
-      // StrictMode: watchId is 'pending' here (INSERT hasn't resolved) → no-op
-      // Real navigation: watchId is actual uuid → send UPDATE
-      if (!watchId.current || watchId.current === "pending") return;
       const duration = Math.floor((Date.now() - watchStartTime.current) / 1000);
+      // Always update localStorage for guest users — independent of INSERT state
+      if (!isAuthRef.current) {
+        guestStorage.updateWatchDuration(id, duration);
+      }
+      // Only send backend UPDATE if INSERT has resolved (watch_id is a real uuid)
+      if (!watchId.current || watchId.current === "pending") return;
       const payload = {
         video_uuid: id,
         watch_id: watchId.current,
