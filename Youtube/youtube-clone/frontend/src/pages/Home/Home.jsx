@@ -20,6 +20,9 @@ const HARDCODED_REGIONS = [
   "RU",
 ];
 
+const areSameSelections = (a, b) =>
+  a.length === b.length && a.every((item) => b.includes(item));
+
 const Home = () => {
   const { isAuthenticated, session, guestId, region, getWatchedVideoIds } =
     useAuth();
@@ -53,6 +56,9 @@ const Home = () => {
   const hasAppliedRegionFilter = appliedRegions.length > 0;
   const hasAnyAppliedFilter =
     hasAppliedCategoryFilter || hasAppliedRegionFilter;
+  const hasPendingFilterChanges =
+    !areSameSelections(selectedCategories, appliedCategories) ||
+    !areSameSelections(selectedRegions, appliedRegions);
 
   // Fetch categories once on mount
   useEffect(() => {
@@ -187,36 +193,6 @@ const Home = () => {
     setSelectedCategories((prev) => prev.filter((cat) => cat !== category));
   }, []);
 
-  const applyCategorySelection = useCallback(async () => {
-    if (selectedCategories.length === 0) return;
-
-    setLoading(true);
-    shownIds.current = new Set();
-
-    try {
-      const data = await apiService.post(API_ENDPOINTS.SEARCH_BY_CATEGORY, {
-        categories: selectedCategories,
-        excluded_video_ids: [],
-        limit: LIMIT,
-      });
-
-      const fetched = data?.videos || [];
-      fetched.forEach((v) => shownIds.current.add(v.id));
-
-      setVideos(fetched);
-      setAppliedCategories(selectedCategories);
-      setSelectedCategories(selectedCategories);
-      setAppliedRegions([]);
-      setSelectedRegions([]);
-      setIsRegionDropdownOpen(false);
-      setHasMore(fetched.length > 0);
-    } catch (err) {
-      console.error("[Home] Failed to apply category search:", err);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedCategories, LIMIT]);
-
   const toggleRegionSelection = useCallback((regionCode) => {
     setSelectedRegions((prev) => {
       if (prev.includes(regionCode)) {
@@ -226,15 +202,23 @@ const Home = () => {
     });
   }, []);
 
-  const applyRegionSelection = useCallback(async () => {
-    if (selectedRegions.length === 0) return;
+  const applyFilters = useCallback(async () => {
+    const normalizedCategories = [...selectedCategories];
+    const normalizedRegions = [...selectedRegions];
+
+    if (normalizedCategories.length === 0 && normalizedRegions.length === 0) {
+      setIsRegionDropdownOpen(false);
+      await fetchFeed();
+      return;
+    }
 
     setLoading(true);
     shownIds.current = new Set();
 
     try {
-      const data = await apiService.post(API_ENDPOINTS.SEARCH_BY_REGION, {
-        regions: selectedRegions,
+      const data = await apiService.post(API_ENDPOINTS.FILTER_HOMEFEED, {
+        categories: normalizedCategories,
+        regions: normalizedRegions,
         excluded_video_ids: [],
         limit: LIMIT,
       });
@@ -243,18 +227,18 @@ const Home = () => {
       fetched.forEach((v) => shownIds.current.add(v.id));
 
       setVideos(fetched);
-      setAppliedRegions(selectedRegions);
-      setSelectedRegions(selectedRegions);
-      setAppliedCategories([]);
-      setSelectedCategories([]);
+      setAppliedCategories(normalizedCategories);
+      setSelectedCategories(normalizedCategories);
+      setAppliedRegions(normalizedRegions);
+      setSelectedRegions(normalizedRegions);
       setIsRegionDropdownOpen(false);
       setHasMore(fetched.length > 0);
     } catch (err) {
-      console.error("[Home] Failed to apply region search:", err);
+      console.error("[Home] Failed to apply unified filters:", err);
     } finally {
       setLoading(false);
     }
-  }, [selectedRegions, LIMIT]);
+  }, [selectedCategories, selectedRegions, fetchFeed, LIMIT]);
 
   const loadPersonalizedFeed = useCallback(async () => {
     setIsRegionDropdownOpen(false);
@@ -269,15 +253,10 @@ const Home = () => {
       const excludedIds = Array.from(shownIds.current);
       let data;
 
-      if (hasAppliedRegionFilter) {
-        data = await apiService.post(API_ENDPOINTS.SEARCH_BY_REGION_RELOAD, {
-          regions: appliedRegions,
-          excluded_video_ids: excludedIds,
-          limit: LIMIT,
-        });
-      } else if (hasAppliedCategoryFilter) {
-        data = await apiService.post(API_ENDPOINTS.SEARCH_BY_CATEGORY_RELOAD, {
+      if (hasAnyAppliedFilter) {
+        data = await apiService.post(API_ENDPOINTS.FILTER_HOMEFEED_RELOAD, {
           categories: appliedCategories,
+          regions: appliedRegions,
           excluded_video_ids: excludedIds,
           limit: LIMIT,
         });
@@ -301,10 +280,7 @@ const Home = () => {
       fetched.forEach((v) => shownIds.current.add(v.id));
       setVideos((prev) => [...prev, ...fetched]);
 
-      if (
-        (hasAppliedCategoryFilter || hasAppliedRegionFilter) &&
-        typeof data?.has_more === "boolean"
-      ) {
+      if (hasAnyAppliedFilter && typeof data?.has_more === "boolean") {
         setHasMore(data.has_more);
       } else {
         setHasMore(fetched.length > 0);
@@ -317,10 +293,9 @@ const Home = () => {
   }, [
     loadingMore,
     hasMore,
-    hasAppliedRegionFilter,
-    appliedRegions,
-    hasAppliedCategoryFilter,
+    hasAnyAppliedFilter,
     appliedCategories,
+    appliedRegions,
     isAuthenticated,
     session,
     guestId,
@@ -397,12 +372,12 @@ const Home = () => {
               </button>
             ))}
 
-            {selectedCategories.length > 0 && (
+            {hasPendingFilterChanges && (
               <button
                 className="category-pill category-pill--active category-pill--confirm"
-                onClick={applyCategorySelection}
+                onClick={applyFilters}
               >
-                Confirm
+                Apply Filters
               </button>
             )}
           </div>
@@ -442,29 +417,22 @@ const Home = () => {
                 >
                   Clear
                 </button>
-                <button
-                  type="button"
-                  className="region-dropdown__confirm"
-                  onClick={applyRegionSelection}
-                  disabled={selectedRegions.length === 0}
-                >
-                  Confirm
-                </button>
               </div>
             </div>
           )}
         </>
       )}
 
-      {hasAppliedCategoryFilter && (
+      {hasAnyAppliedFilter && (
         <div className="home__active-filter">
-          Showing categories: {appliedCategories.join(", ")}
-        </div>
-      )}
-
-      {hasAppliedRegionFilter && (
-        <div className="home__active-filter">
-          Showing regions: {appliedRegions.join(", ")}
+          Showing filters:
+          {hasAppliedCategoryFilter
+            ? ` Categories: ${appliedCategories.join(", ")}`
+            : ""}
+          {hasAppliedCategoryFilter && hasAppliedRegionFilter ? " |" : ""}
+          {hasAppliedRegionFilter
+            ? ` Regions: ${appliedRegions.join(", ")}`
+            : ""}
         </div>
       )}
 
@@ -489,14 +457,12 @@ const Home = () => {
       {videos.length === 0 && !loading && (
         <div style={{ textAlign: "center", padding: "48px", color: "#606060" }}>
           <h3>
-            {hasAppliedCategoryFilter
-              ? `No videos found for ${appliedCategories.join(", ")}`
-              : hasAppliedRegionFilter
-                ? `No videos found for regions ${appliedRegions.join(", ")}`
-                : "No videos found"}
+            {hasAnyAppliedFilter
+              ? `No videos found for selected filters`
+              : "No videos found"}
           </h3>
           <p>
-            {hasAppliedCategoryFilter || hasAppliedRegionFilter
+            {hasAnyAppliedFilter
               ? "Try changing your selected filters"
               : "Please refresh and try again"}
           </p>

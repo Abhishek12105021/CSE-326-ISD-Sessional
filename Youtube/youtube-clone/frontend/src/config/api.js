@@ -42,6 +42,8 @@ export const API_ENDPOINTS = {
   // Search
   SEARCH: "/api/search",
   SEARCH_RELOAD: "/api/reload-search",
+  FILTER_HOMEFEED: "/api/filter-homefeed",
+  FILTER_HOMEFEED_RELOAD: "/api/reload-filter-homefeed",
   SEARCH_BY_CATEGORY: "/api/search-by-category",
   SEARCH_BY_CATEGORY_RELOAD: "/api/reload-search-by-category",
   SEARCH_BY_REGION: "/api/search-by-region",

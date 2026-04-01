@@ -201,6 +201,14 @@ class RegionSearchRequest(BaseModel):
     limit: int = 30
 
 
+class FilterHomeFeedRequest(BaseModel):
+    """Unified request to filter/paginate homefeed by categories OR regions."""
+    categories: list[str] = []
+    regions: list[str] = []
+    excluded_video_ids: list[str] = []
+    limit: int = 30
+
+
 class ReloadRecommendRequest(BaseModel):
     """Request to reload recommendations with lazy loading"""
     video_id: str  # Reference video UUID
