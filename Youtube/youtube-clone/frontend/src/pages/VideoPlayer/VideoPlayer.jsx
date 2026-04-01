@@ -152,16 +152,17 @@ const VideoPlayer = () => {
     };
   }, [id]);
 
-  // Save to localStorage when metadata loads (separate from watch tracking)
+  // Guest-only: save to localStorage watch history for feed personalization
+  // Authenticated users' history is tracked server-side via the watch endpoint
   useEffect(() => {
-    if (!video) return;
+    if (!video || isAuthenticated) return;
     guestStorage.addToWatchHistory({
       videoId: id,
       title: video.title,
       channelName: video.channel?.name,
       thumbnail: video.thumbnail,
     });
-  }, [video, id]);
+  }, [video, id, isAuthenticated]);
 
   // Fetch recommendations
   useEffect(() => {

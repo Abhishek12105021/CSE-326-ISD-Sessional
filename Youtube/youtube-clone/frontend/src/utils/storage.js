@@ -84,11 +84,18 @@ export const guestStorage = {
     localStorage.removeItem(WATCH_HISTORY_KEY);
   },
 
-  // Clear all guest data
+  // Clear all guest data (call on login)
   clearAllGuestData() {
     localStorage.removeItem(GUEST_STORAGE_KEY);
     localStorage.removeItem(REGION_STORAGE_KEY);
     localStorage.removeItem(WATCH_HISTORY_KEY);
+    localStorage.removeItem('yt_current_watch');
+  },
+
+  // Clear watch-related data only (call on logout)
+  clearWatchData() {
+    localStorage.removeItem(WATCH_HISTORY_KEY);
+    localStorage.removeItem('yt_current_watch');
   },
 };
 
