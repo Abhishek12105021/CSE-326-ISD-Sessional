@@ -2,7 +2,55 @@
  * Base API Service - HTTP client wrapper
  */
 
-import { API_BASE_URL } from '../config';
+import { API_BASE_URL } from "../config";
+import { formatDateTimeForTimezone, formatTimeAgo } from "../utils";
+
+function normalizeTimestamps(payload) {
+  if (Array.isArray(payload)) {
+    return payload.map(normalizeTimestamps);
+  }
+
+  if (!payload || typeof payload !== "object") {
+    return payload;
+  }
+
+  const normalized = {};
+  for (const [key, value] of Object.entries(payload)) {
+    normalized[key] = normalizeTimestamps(value);
+  }
+
+  if (
+    typeof normalized.publish_time_raw === "string" &&
+    normalized.publish_time_raw.trim()
+  ) {
+    normalized.timestamp = formatTimeAgo(normalized.publish_time_raw);
+  }
+
+  if (
+    typeof normalized.started_at === "string" &&
+    normalized.started_at.trim()
+  ) {
+    normalized.started_at_local = formatDateTimeForTimezone(
+      normalized.started_at,
+      { mode: "client" },
+    );
+    normalized.started_at_gmt6 = formatDateTimeForTimezone(
+      normalized.started_at,
+      { mode: "gmt+6" },
+    );
+  }
+
+  if (typeof normalized.ended_at === "string" && normalized.ended_at.trim()) {
+    normalized.ended_at_local = formatDateTimeForTimezone(normalized.ended_at, {
+      mode: "client",
+    });
+    normalized.ended_at_gmt6 = formatDateTimeForTimezone(normalized.ended_at, {
+      mode: "gmt+6",
+    });
+  }
+
+  return normalized;
+}
 
 class ApiService {
   constructor(baseURL = API_BASE_URL) {
@@ -15,7 +63,7 @@ class ApiService {
     const config = {
       ...options,
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         ...options.headers,
       },
     };
@@ -33,17 +81,18 @@ class ApiService {
 
     // Return parsed JSON (or null for 204 No Content)
     if (response.status === 204) return null;
-    return response.json();
+    const data = await response.json();
+    return normalizeTimestamps(data);
   }
 
   async get(endpoint, options = {}) {
-    return this.request(endpoint, { ...options, method: 'GET' });
+    return this.request(endpoint, { ...options, method: "GET" });
   }
 
   async post(endpoint, data, options = {}) {
     return this.request(endpoint, {
       ...options,
-      method: 'POST',
+      method: "POST",
       body: JSON.stringify(data),
     });
   }
@@ -51,7 +100,7 @@ class ApiService {
   async put(endpoint, data, options = {}) {
     return this.request(endpoint, {
       ...options,
-      method: 'PUT',
+      method: "PUT",
       body: JSON.stringify(data),
     });
   }
@@ -59,7 +108,7 @@ class ApiService {
   async delete(endpoint, data, options = {}) {
     return this.request(endpoint, {
       ...options,
-      method: 'DELETE',
+      method: "DELETE",
       body: data ? JSON.stringify(data) : undefined,
     });
   }

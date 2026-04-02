@@ -7,16 +7,22 @@ Endpoints:
 - POST /search?q=query&limit=50  → Search by text query
 - POST /recommend?video_id=uuid&limit=15 → Find similar videos
 - POST /reload-search → Lazy load more search results with pagination
+- POST /filter-homefeed → Unified homefeed filter by categories/regions (OR)
+- POST /reload-filter-homefeed → Lazy load unified filtered homefeed
+- POST /reload-search-by-category → Lazy load category-filtered search results
+- POST /search-by-region → Search videos filtered by regions
+- POST /reload-search-by-region → Lazy load region-filtered search results
 """
 from fastapi import APIRouter, Query, HTTPException, status
+import asyncio
 import numpy as np
 from uuid import UUID
 from typing import Optional
 import time
 
 from app.core import embedding_service, faiss_manager
-from app.db import get_videos_metadata_by_uuids
-from app.schemas.feed import VideoResponse, ChannelInfo, SearchReloadRequest, ReloadRecommendRequest
+from app.db import get_videos_metadata_by_uuids, get_videos_by_categories, get_videos_by_regions
+from app.schemas.feed import VideoResponse, ChannelInfo, SearchReloadRequest, ReloadRecommendRequest, CategorySearchRequest, RegionSearchRequest, FilterHomeFeedRequest
 from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
 
 router = APIRouter()
@@ -37,6 +43,7 @@ def transform_video(video: dict) -> VideoResponse:
         ),
         views=format_views(video.get("views", 0)),
         timestamp=format_timestamp(video.get("publish_time", "")),
+        publish_time_raw=video.get("publish_time", ""),
         duration="10:00",
         category=video.get("category_name", "Unknown"),
         velocity_score=video.get("velocity_score")
@@ -926,4 +933,430 @@ async def reload_recommendations(request: ReloadRecommendRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Recommendation reload failed"
+        )
+
+
+def _normalize_filter_values(values: list[str], upper: bool = False) -> list[str]:
+    """Normalize, de-duplicate, and trim empty values while preserving order."""
+    cleaned: list[str] = []
+    for value in values or []:
+        if not isinstance(value, str):
+            continue
+        normalized = value.strip()
+        if upper:
+            normalized = normalized.upper()
+        if normalized and normalized not in cleaned:
+            cleaned.append(normalized)
+    return cleaned
+
+
+def _sort_key_by_velocity_and_views(video: dict) -> tuple[float, float]:
+    velocity = video.get("velocity_score")
+    views = video.get("views") or 0
+    return (velocity if velocity is not None else float("-inf"), float(views))
+
+
+def _merge_and_sort_filtered_rows(video_rows: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    for row in video_rows:
+        video_id = row.get("id")
+        if not video_id:
+            continue
+
+        existing = merged.get(video_id)
+        if not existing or _sort_key_by_velocity_and_views(row) > _sort_key_by_velocity_and_views(existing):
+            merged[video_id] = row
+
+    combined = list(merged.values())
+    combined.sort(key=_sort_key_by_velocity_and_views, reverse=True)
+    return combined
+
+
+async def _fetch_unified_filtered_videos(
+    categories: list[str],
+    regions: list[str],
+    excluded_ids: list[str],
+    limit: int,
+) -> list[dict]:
+    """
+    Fetch videos with OR logic between categories and regions.
+
+    - categories only: category filter
+    - regions only: region filter
+    - both: union(categories, regions), de-duplicated and sorted by velocity/views
+    """
+    if categories and not regions:
+        return await get_videos_by_categories(
+            categories=categories,
+            excluded_ids=excluded_ids,
+            limit=limit,
+        )
+
+    if regions and not categories:
+        return await get_videos_by_regions(
+            regions=regions,
+            excluded_ids=excluded_ids,
+            limit=limit,
+        )
+
+    # Both filters active: OR merge category + region pools.
+    # We over-fetch per source to reduce under-filled unions after de-duplication.
+    per_source_limit = min(limit * 2, 200)
+    category_rows, region_rows = await asyncio.gather(
+        get_videos_by_categories(
+            categories=categories,
+            excluded_ids=excluded_ids,
+            limit=per_source_limit,
+        ),
+        get_videos_by_regions(
+            regions=regions,
+            excluded_ids=excluded_ids,
+            limit=per_source_limit,
+        ),
+    )
+    return _merge_and_sort_filtered_rows(category_rows + region_rows)
+
+
+@router.post("/filter-homefeed")
+async def filter_homefeed(request: FilterHomeFeedRequest):
+    """Unified category/region homefeed filter with OR semantics."""
+    categories = _normalize_filter_values(request.categories)
+    regions = _normalize_filter_values(request.regions, upper=True)
+
+    if not categories and not regions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one category or region is required"
+        )
+
+    try:
+        limit = min(request.limit, 50)
+        excluded_ids = request.excluded_video_ids if request.excluded_video_ids else []
+
+        print(
+            f"[FILTER-HOMEFEED] categories={categories}, regions={regions}, "
+            f"excluded={len(excluded_ids)}, limit={limit}"
+        )
+
+        videos_data = await _fetch_unified_filtered_videos(
+            categories=categories,
+            regions=regions,
+            excluded_ids=excluded_ids,
+            limit=limit,
+        )
+
+        current_batch = videos_data[:limit]
+        video_responses = [transform_video(v) for v in current_batch]
+
+        return {
+            "videos": video_responses,
+            "categories": categories,
+            "regions": regions,
+            "total": len(video_responses),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[FILTER-HOMEFEED ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unified homefeed filter failed"
+        )
+
+
+@router.post("/reload-filter-homefeed")
+async def reload_filter_homefeed(request: FilterHomeFeedRequest):
+    """Lazy loading endpoint for unified category/region homefeed filtering."""
+    categories = _normalize_filter_values(request.categories)
+    regions = _normalize_filter_values(request.regions, upper=True)
+
+    if not categories and not regions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one category or region is required"
+        )
+
+    try:
+        excluded_ids = request.excluded_video_ids if request.excluded_video_ids else []
+        limit = min(request.limit, 50)
+
+        print(f"\n{'#' * 70}")
+        print(
+            f"[RELOAD-FILTER-HOMEFEED] categories={categories}, regions={regions}, "
+            f"limit={limit}"
+        )
+        print(f"[RELOAD-FILTER-HOMEFEED] excluding {len(excluded_ids)} already-shown videos")
+        print(f"{'#' * 70}")
+
+        videos_data = await _fetch_unified_filtered_videos(
+            categories=categories,
+            regions=regions,
+            excluded_ids=excluded_ids,
+            limit=limit + 1,
+        )
+
+        has_more = len(videos_data) > limit
+        current_batch = videos_data[:limit]
+        video_responses = [transform_video(v) for v in current_batch]
+
+        return {
+            "videos": video_responses,
+            "categories": categories,
+            "regions": regions,
+            "total": len(video_responses),
+            "has_more": has_more,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[RELOAD-FILTER-HOMEFEED ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Unified homefeed reload failed"
+        )
+
+
+@router.post("/search-by-category")
+async def search_by_category(request: CategorySearchRequest):
+    """
+    Fetch videos filtered by one or more categories, ordered by velocity score then views.
+
+    Used for both initial load and infinite-scroll pagination:
+    - Initial load: send categories, empty excluded_video_ids
+    - Pagination:   send categories + all UUIDs already shown in excluded_video_ids
+
+    REQUEST:
+    {
+        "categories": ["Music", "Gaming"],
+        "excluded_video_ids": [],   // grow this list for pagination
+        "limit": 30
+    }
+
+    RESPONSE:
+    {
+        "videos": [VideoResponse, ...],
+        "categories": ["Music", "Gaming"],
+        "total": 30
+    }
+    """
+    if not request.categories:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one category is required"
+        )
+
+    try:
+        print(f"[CATEGORY SEARCH] categories={request.categories}, excluded={len(request.excluded_video_ids)}")
+
+        videos_data = await get_videos_by_categories(
+            categories=request.categories,
+            excluded_ids=request.excluded_video_ids if request.excluded_video_ids else None,
+            limit=request.limit,
+        )
+
+        video_responses = [transform_video(v) for v in videos_data]
+
+        return {
+            "videos": video_responses,
+            "categories": request.categories,
+            "total": len(video_responses),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[CATEGORY SEARCH ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Category search failed"
+        )
+
+
+@router.post("/reload-search-by-category")
+async def reload_search_by_category(request: CategorySearchRequest):
+    """
+    Lazy loading endpoint for category-based search results.
+
+    Works like `/search-by-category` but is optimized for infinite scroll by
+    excluding all previously shown video IDs and returning the next batch.
+
+    REQUEST:
+    {
+        "categories": ["Music", "Gaming"],
+        "excluded_video_ids": ["uuid1", "uuid2", ...],
+        "limit": 30
+    }
+
+    RESPONSE:
+    {
+        "videos": [VideoResponse, ...],
+        "categories": ["Music", "Gaming"],
+        "total": 30,
+        "has_more": true
+    }
+    """
+    if not request.categories:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one category is required"
+        )
+
+    try:
+        excluded_ids = request.excluded_video_ids if request.excluded_video_ids else []
+        limit = min(request.limit, 50)  # Cap at 50 per reload
+
+        print(f"\n{'#'*70}")
+        print(f"[RELOAD-CATEGORY] categories={request.categories}, limit={limit}")
+        print(f"[RELOAD-CATEGORY] excluding {len(excluded_ids)} already-shown videos")
+        print(f"{'#'*70}")
+
+        # Fetch one extra record so frontend can know if additional pages exist.
+        videos_data = await get_videos_by_categories(
+            categories=request.categories,
+            excluded_ids=excluded_ids,
+            limit=limit + 1,
+        )
+
+        has_more = len(videos_data) > limit
+        current_batch = videos_data[:limit]
+        video_responses = [transform_video(v) for v in current_batch]
+
+        return {
+            "videos": video_responses,
+            "categories": request.categories,
+            "total": len(video_responses),
+            "has_more": has_more,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[RELOAD-CATEGORY ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Category reload failed"
+        )
+
+
+@router.post("/search-by-region")
+async def search_by_region(request: RegionSearchRequest):
+    """
+    Fetch videos filtered by one or more region codes (country_code).
+
+    Used for both initial load and infinite-scroll pagination:
+    - Initial load: send regions, empty excluded_video_ids
+    - Pagination:   send regions + all UUIDs already shown in excluded_video_ids
+
+    REQUEST:
+    {
+        "regions": ["US", "GB", "IN"],
+        "excluded_video_ids": [],
+        "limit": 30
+    }
+
+    RESPONSE:
+    {
+        "videos": [VideoResponse, ...],
+        "regions": ["US", "GB", "IN"],
+        "total": 30
+    }
+    """
+    if not request.regions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one region is required"
+        )
+
+    try:
+        print(f"[REGION SEARCH] regions={request.regions}, excluded={len(request.excluded_video_ids)}")
+
+        videos_data = await get_videos_by_regions(
+            regions=request.regions,
+            excluded_ids=request.excluded_video_ids if request.excluded_video_ids else None,
+            limit=request.limit,
+        )
+
+        video_responses = [transform_video(v) for v in videos_data]
+
+        return {
+            "videos": video_responses,
+            "regions": request.regions,
+            "total": len(video_responses),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[REGION SEARCH ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Region search failed"
+        )
+
+
+@router.post("/reload-search-by-region")
+async def reload_search_by_region(request: RegionSearchRequest):
+    """
+    Lazy loading endpoint for region-based search results.
+
+    Works like `/search-by-region` but is optimized for infinite scroll by
+    excluding all previously shown video IDs and returning the next batch.
+
+    REQUEST:
+    {
+        "regions": ["US", "GB", "IN"],
+        "excluded_video_ids": ["uuid1", "uuid2", ...],
+        "limit": 30
+    }
+
+    RESPONSE:
+    {
+        "videos": [VideoResponse, ...],
+        "regions": ["US", "GB", "IN"],
+        "total": 30,
+        "has_more": true
+    }
+    """
+    if not request.regions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="At least one region is required"
+        )
+
+    try:
+        excluded_ids = request.excluded_video_ids if request.excluded_video_ids else []
+        limit = min(request.limit, 50)  # Cap at 50 per reload
+
+        print(f"\n{'#'*70}")
+        print(f"[RELOAD-REGION] regions={request.regions}, limit={limit}")
+        print(f"[RELOAD-REGION] excluding {len(excluded_ids)} already-shown videos")
+        print(f"{'#'*70}")
+
+        # Fetch one extra record so frontend can know if additional pages exist.
+        videos_data = await get_videos_by_regions(
+            regions=request.regions,
+            excluded_ids=excluded_ids,
+            limit=limit + 1,
+        )
+
+        has_more = len(videos_data) > limit
+        current_batch = videos_data[:limit]
+        video_responses = [transform_video(v) for v in current_batch]
+
+        return {
+            "videos": video_responses,
+            "regions": request.regions,
+            "total": len(video_responses),
+            "has_more": has_more,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[RELOAD-REGION ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Region reload failed"
         )

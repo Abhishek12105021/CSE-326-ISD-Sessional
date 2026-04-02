@@ -10,3 +10,6 @@ numpy>=1.24.0
 faiss-cpu>=1.7.4
 sentence-transformers>=2.2.0
 accelerate>=1.1.0
+huggingface_hub>=0.24.0
+transformers>=4.40.0
+onnxruntime>=1.18.0

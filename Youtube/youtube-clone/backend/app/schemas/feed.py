@@ -17,6 +17,7 @@ class VideoResponse(BaseModel):
     channel: ChannelInfo
     views: str
     timestamp: str
+    publish_time_raw: Optional[str] = None
     duration: str
     category: str
     velocity_score: Optional[float] = None
@@ -185,6 +186,28 @@ class SearchReloadRequest(BaseModel):
     excluded_video_ids: list[str] = []  # UUIDs of videos already shown
     offset: int = 0  # Pagination offset for next batch
     limit: int = 25  # Number of new videos to return (20-30)
+
+
+class CategorySearchRequest(BaseModel):
+    """Request to fetch/paginate videos filtered by one or more categories"""
+    categories: list[str]  # e.g. ["Music", "Gaming"]
+    excluded_video_ids: list[str] = []  # UUIDs already shown (for pagination)
+    limit: int = 30
+
+
+class RegionSearchRequest(BaseModel):
+    """Request to fetch/paginate videos filtered by one or more region codes"""
+    regions: list[str]  # e.g. ["US", "GB", "IN"]
+    excluded_video_ids: list[str] = []  # UUIDs already shown (for pagination)
+    limit: int = 30
+
+
+class FilterHomeFeedRequest(BaseModel):
+    """Unified request to filter/paginate homefeed by categories OR regions."""
+    categories: list[str] = []
+    regions: list[str] = []
+    excluded_video_ids: list[str] = []
+    limit: int = 30
 
 
 class ReloadRecommendRequest(BaseModel):

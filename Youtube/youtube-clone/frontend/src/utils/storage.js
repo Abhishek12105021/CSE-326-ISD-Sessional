@@ -73,6 +73,14 @@ export const guestStorage = {
     return newHistory;
   },
 
+  updateWatchDuration(videoId, durationSeconds) {
+    const history = this.getWatchHistory();
+    const updated = history.map(v =>
+      v.videoId === videoId ? { ...v, watchDuration: durationSeconds } : v
+    );
+    localStorage.setItem(WATCH_HISTORY_KEY, JSON.stringify(updated));
+  },
+
   removeFromWatchHistory(videoId) {
     const history = this.getWatchHistory();
     const filtered = history.filter(v => v.videoId !== videoId);
@@ -84,11 +92,18 @@ export const guestStorage = {
     localStorage.removeItem(WATCH_HISTORY_KEY);
   },
 
-  // Clear all guest data
+  // Clear all guest data (call on login)
   clearAllGuestData() {
     localStorage.removeItem(GUEST_STORAGE_KEY);
     localStorage.removeItem(REGION_STORAGE_KEY);
     localStorage.removeItem(WATCH_HISTORY_KEY);
+    localStorage.removeItem('yt_current_watch');
+  },
+
+  // Clear watch-related data only (call on logout)
+  clearWatchData() {
+    localStorage.removeItem(WATCH_HISTORY_KEY);
+    localStorage.removeItem('yt_current_watch');
   },
 };
 

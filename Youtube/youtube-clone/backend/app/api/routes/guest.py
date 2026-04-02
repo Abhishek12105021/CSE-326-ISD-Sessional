@@ -299,6 +299,7 @@ async def get_guest_feed(request: GuestFeedRequest):
             ),
             views=format_views(v.get("views", 0)),
             timestamp=format_timestamp(v.get("publish_time", "")),
+            publish_time_raw=v.get("publish_time", ""),
             duration="10:00",
             category=v.get("category_name", "Unknown"),
             velocity_score=v.get("velocity_score")
@@ -545,6 +546,7 @@ async def reload_guest_feed(request: GuestReloadFeedRequest):
             ),
             views=format_views(v.get("views", 0)),
             timestamp=format_timestamp(v.get("publish_time", "")),
+            publish_time_raw=v.get("publish_time", ""),
             duration="10:00",
             category=v.get("category_name", "Unknown"),
             velocity_score=v.get("velocity_score")

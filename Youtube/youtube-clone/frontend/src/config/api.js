@@ -2,49 +2,57 @@
  * API Configuration
  */
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+export const API_BASE_URL =
+  import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 export const API_ENDPOINTS = {
-    // Auth
-    AUTH_PROFILE: '/api/auth/profile',
-    AUTH_LOGOUT: '/api/auth/logout',
-    AUTH_LOGOUT_ALL: '/api/auth/logout-all',
+  // Auth
+  AUTH_PROFILE: "/api/auth/profile",
+  AUTH_LOGOUT: "/api/auth/logout",
+  AUTH_LOGOUT_ALL: "/api/auth/logout-all",
 
-    // Guest
-    GUEST_SESSION: '/api/guest/session',
-    GUEST_FEED: '/api/guest/feed',
-    GUEST_RELOAD: '/api/guest/reload',
-    GUEST_WATCH: '/api/guest/watch',
+  // Guest
+  GUEST_SESSION: "/api/guest/session",
+  GUEST_FEED: "/api/guest/feed",
+  GUEST_RELOAD: "/api/guest/reload",
+  GUEST_WATCH: "/api/guest/watch",
 
-    // Feed
-    FEED: '/api/feed',
-    FEED_RELOAD: '/api/reload',
-    TRENDING: '/api/trending',
-    CATEGORIES: '/api/categories',
+  // Feed
+  FEED: "/api/feed",
+  FEED_RELOAD: "/api/reload",
+  TRENDING: "/api/trending",
+  CATEGORIES: "/api/categories",
 
-    // Video
-    VIDEO_GET: '/api/get',
-    WATCH: '/api/watch',
-    WATCH_HISTORY: '/api/watch-history',
+  // Video
+  VIDEO_GET: "/api/get",
+  WATCH: "/api/watch",
+  WATCH_HISTORY: "/api/watch-history",
 
-    // Likes / Dislikes
-    LIKE: '/api/like',
-    LIKES: '/api/likes',
-    DISLIKE: '/api/dislike',
+  // Likes / Dislikes
+  LIKE: "/api/like",
+  LIKES: "/api/likes",
+  DISLIKE: "/api/dislike",
+  DISLIKES: "/api/dislikes",
 
-    // Subscriptions
-    SUBSCRIBE: '/api/subscribe',
-    SUBSCRIPTIONS: '/api/subscriptions',
-    CHANNELS: '/api/channels',
+  // Subscriptions
+  SUBSCRIBE: "/api/subscribe",
+  SUBSCRIPTIONS: "/api/subscriptions",
+  CHANNELS: "/api/channels",
 
-    // Search
-    SEARCH: '/api/search',
-    SEARCH_RELOAD: '/api/reload-search',
+  // Search
+  SEARCH: "/api/search",
+  SEARCH_RELOAD: "/api/reload-search",
+  FILTER_HOMEFEED: "/api/filter-homefeed",
+  FILTER_HOMEFEED_RELOAD: "/api/reload-filter-homefeed",
+  SEARCH_BY_CATEGORY: "/api/search-by-category",
+  SEARCH_BY_CATEGORY_RELOAD: "/api/reload-search-by-category",
+  SEARCH_BY_REGION: "/api/search-by-region",
+  SEARCH_BY_REGION_RELOAD: "/api/reload-search-by-region",
 
-    // Recommendations
-    RECOMMEND: '/api/recommend',
-    RECOMMEND_RELOAD: '/api/reload-recommend',
+  // Recommendations
+  RECOMMEND: "/api/recommend",
+  RECOMMEND_RELOAD: "/api/reload-recommend",
 
-    // Health
-    HEALTH: '/health',
+  // Health
+  HEALTH: "/health",
 };

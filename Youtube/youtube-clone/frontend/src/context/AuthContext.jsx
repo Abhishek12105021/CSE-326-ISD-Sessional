@@ -32,15 +32,14 @@ export function AuthProvider({ children }) {
         setUser(session?.user ?? null);
 
         if (event === 'SIGNED_IN' && session?.user) {
-          const previousGuestId = guestStorage.getRawGuestId();
-
-          if (previousGuestId) {
-            // Clear guest data (managed via localStorage)
-            guestStorage.clearGuestId();
-          }
-
+          // Clear all guest session data (watch history, guest ID, current watch session)
+          // Authenticated users' watch history is tracked server-side, not in localStorage
+          guestStorage.clearAllGuestData();
           setGuestId(null);
         } else if (event === 'SIGNED_OUT') {
+          // Clear any watch data left from the authenticated session
+          guestStorage.clearWatchData();
+          // Generate a fresh guest ID for the new guest session
           setGuestId(guestStorage.getGuestId());
         }
       }

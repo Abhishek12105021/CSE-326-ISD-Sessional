@@ -3,7 +3,7 @@
  */
 
 export function formatViewCount(views) {
-  if (typeof views === 'string') {
+  if (typeof views === "string") {
     return views; // Already formatted
   }
 
@@ -20,7 +20,7 @@ export function formatViewCount(views) {
 }
 
 export function formatSubscriberCount(count) {
-  if (typeof count === 'string') {
+  if (typeof count === "string") {
     return count;
   }
 
@@ -34,7 +34,7 @@ export function formatSubscriberCount(count) {
 }
 
 export function formatDuration(seconds) {
-  if (typeof seconds === 'string') {
+  if (typeof seconds === "string") {
     return seconds;
   }
 
@@ -43,43 +43,106 @@ export function formatDuration(seconds) {
   const secs = seconds % 60;
 
   if (hours > 0) {
-    return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   }
-  return `${minutes}:${secs.toString().padStart(2, '0')}`;
+  return `${minutes}:${secs.toString().padStart(2, "0")}`;
 }
 
-export function formatTimeAgo(date) {
-  if (typeof date === 'string' && !date.includes('-')) {
-    return date; // Already formatted like "2 weeks ago"
+function parseUtcDate(dateInput) {
+  if (!dateInput) return null;
+  if (dateInput instanceof Date) return dateInput;
+  if (typeof dateInput !== "string") return new Date(dateInput);
+
+  const value = dateInput.trim();
+  // Treat timezone-less ISO values from DB as UTC to avoid local-time misinterpretation.
+  const isIsoWithoutTimezone =
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value);
+  const normalized = isIsoWithoutTimezone ? `${value}Z` : value;
+
+  return new Date(normalized);
+}
+
+export function formatTimeAgo(dateInput, nowInput = new Date()) {
+  if (!dateInput) return "";
+
+  const now = nowInput instanceof Date ? nowInput : new Date(nowInput);
+  const past = parseUtcDate(dateInput);
+  if (!past) return "";
+
+  // If input is already pre-formatted text (or invalid), keep it unchanged.
+  if (Number.isNaN(past.getTime())) {
+    return typeof dateInput === "string" ? dateInput : "";
   }
 
-  const now = new Date();
-  const past = new Date(date);
-  const diffInSeconds = Math.floor((now - past) / 1000);
+  const diffInSeconds = Math.floor((now.getTime() - past.getTime()) / 1000);
+  if (diffInSeconds <= 0) return "just now";
 
   if (diffInSeconds < 60) {
-    return 'just now';
+    return "just now";
   }
+
   if (diffInSeconds < 3600) {
     const minutes = Math.floor(diffInSeconds / 60);
-    return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'} ago`;
+    return `${minutes} ${minutes === 1 ? "minute" : "minutes"} ago`;
   }
+
   if (diffInSeconds < 86400) {
     const hours = Math.floor(diffInSeconds / 3600);
-    return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`;
+    return `${hours} ${hours === 1 ? "hour" : "hours"} ago`;
   }
-  if (diffInSeconds < 604800) {
-    const days = Math.floor(diffInSeconds / 86400);
-    return `${days} ${days === 1 ? 'day' : 'days'} ago`;
+
+  const diffInDays = Math.floor(diffInSeconds / 86400);
+  if (diffInDays < 7) {
+    return `${diffInDays} ${diffInDays === 1 ? "day" : "days"} ago`;
   }
-  if (diffInSeconds < 2592000) {
-    const weeks = Math.floor(diffInSeconds / 604800);
-    return `${weeks} ${weeks === 1 ? 'week' : 'weeks'} ago`;
+
+  if (diffInDays < 30) {
+    const weeks = Math.floor(diffInDays / 7);
+    return `${weeks} ${weeks === 1 ? "week" : "weeks"} ago`;
   }
-  if (diffInSeconds < 31536000) {
-    const months = Math.floor(diffInSeconds / 2592000);
-    return `${months} ${months === 1 ? 'month' : 'months'} ago`;
+
+  let months =
+    (now.getUTCFullYear() - past.getUTCFullYear()) * 12 +
+    (now.getUTCMonth() - past.getUTCMonth());
+  if (now.getUTCDate() < past.getUTCDate()) {
+    months -= 1;
   }
-  const years = Math.floor(diffInSeconds / 31536000);
-  return `${years} ${years === 1 ? 'year' : 'years'} ago`;
+  months = Math.max(1, months);
+
+  if (months < 12) {
+    return `${months} ${months === 1 ? "month" : "months"} ago`;
+  }
+
+  const years = Math.floor(months / 12);
+  return `${years} ${years === 1 ? "year" : "years"} ago`;
+}
+
+export function formatDateTimeForTimezone(
+  dateInput,
+  { mode = "client", locale } = {},
+) {
+  if (!dateInput) return "";
+
+  const utcDate = parseUtcDate(dateInput);
+  if (!utcDate || Number.isNaN(utcDate.getTime())) {
+    return typeof dateInput === "string" ? dateInput : "";
+  }
+
+  const formatOptions = {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  };
+
+  if (mode === "gmt+6") {
+    return new Intl.DateTimeFormat(locale, {
+      ...formatOptions,
+      timeZone: "Asia/Dhaka",
+    }).format(utcDate);
+  }
+
+  return new Intl.DateTimeFormat(locale, formatOptions).format(utcDate);
 }
