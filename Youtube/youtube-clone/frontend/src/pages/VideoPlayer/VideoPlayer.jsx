@@ -461,6 +461,48 @@ const VideoPlayer = () => {
     setExpandedReplies((prev) => ({ ...prev, [commentId]: !prev[commentId] }));
   };
 
+  const generateColorHash = (value) => {
+    const str = value || "Channel";
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const colors = [
+      ["#FF6B6B", "#FFE66D"],
+      ["#4ECDC4", "#44A08D"],
+      ["#95E1D3", "#38A169"],
+      ["#FA8072", "#FFB347"],
+      ["#87CEEB", "#4169E1"],
+      ["#DDA0DD", "#BA55D3"],
+      ["#20B2AA", "#00CED1"],
+      ["#FF69B4", "#FF1493"],
+    ];
+    return colors[Math.abs(hash) % colors.length];
+  };
+
+  const getInitials = (name) => {
+    const normalized = (name || "C").trim();
+    if (!normalized) return "C";
+    return normalized
+      .split(" ")
+      .filter(Boolean)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  const getHqThumbnail = (thumbnailUrl) => {
+    if (!thumbnailUrl) return "";
+    return thumbnailUrl.replace(
+      /\/(default|mqdefault|hqdefault|sddefault|maxresdefault)\.jpg$/,
+      "/hqdefault.jpg",
+    );
+  };
+
+  const channelColors = generateColorHash(video?.channel?.name);
+  const channelInitials = getInitials(video?.channel?.name);
+
   if (loading) {
     return (
       <div
@@ -514,11 +556,17 @@ const VideoPlayer = () => {
             {/* Channel Info */}
             <div className="video-player__channel-info">
               <Link to={`/channel/${video.channel?.id}`}>
-                <img
-                  className="video-player__channel-avatar"
-                  src={video.channel?.avatar}
-                  alt={video.channel?.name}
-                />
+                <div
+                  className="video-player__channel-avatar-fallback"
+                  style={{
+                    background: `linear-gradient(135deg, ${channelColors[0]} 0%, ${channelColors[1]} 100%)`,
+                  }}
+                  aria-label={video.channel?.name}
+                >
+                  <span className="video-player__channel-avatar-initials">
+                    {channelInitials}
+                  </span>
+                </div>
               </Link>
               <div className="video-player__channel-text">
                 <Link
@@ -709,7 +757,7 @@ const VideoPlayer = () => {
             <div className="recommendation-card__thumbnail-container">
               <img
                 className="recommendation-card__thumbnail"
-                src={rec.thumbnail}
+                src={getHqThumbnail(rec.thumbnail)}
                 alt={rec.title}
                 loading="lazy"
               />
