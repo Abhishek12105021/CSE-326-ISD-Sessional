@@ -23,6 +23,7 @@ const Channel = () => {
   const [error, setError] = useState("");
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [subscriptionSuccess, setSubscriptionSuccess] = useState(false);
 
   const shownIds = useRef([]);
   const loadMoreRef = useRef(null);
@@ -149,6 +150,12 @@ const Channel = () => {
         await client.post(API_ENDPOINTS.SUBSCRIBE, { channel_name: requestedChannelName });
         setIsSubscribed(true);
       }
+
+      setSubscriptionSuccess(true);
+      window.dispatchEvent(new Event("yt:subscriptions-updated"));
+      setTimeout(() => {
+        setSubscriptionSuccess(false);
+      }, 850);
     } catch (err) {
       console.error("[Channel] Subscribe toggle failed:", err);
     } finally {
@@ -249,11 +256,13 @@ const Channel = () => {
           </p>
           {isAuthenticated && (
             <button
-              className={`channel-page__subscribe-btn ${isSubscribed ? "channel-page__subscribe-btn--subscribed" : ""}`}
+              className={`channel-page__subscribe-btn ${isSubscribed ? "channel-page__subscribe-btn--subscribed" : ""} ${subscriptionLoading ? "channel-page__subscribe-btn--loading" : ""} ${subscriptionSuccess ? "channel-page__subscribe-btn--success" : ""}`}
               onClick={handleSubscribe}
               disabled={subscriptionLoading}
             >
-              {isSubscribed ? "Subscribed" : "Subscribe"}
+              <span className="channel-page__subscribe-label">
+                {isSubscribed ? "Subscribed" : "Subscribe"}
+              </span>
             </button>
           )}
         </div>

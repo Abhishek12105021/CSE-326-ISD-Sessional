@@ -36,6 +36,8 @@ const VideoPlayer = () => {
   const [dislikeCount, setDislikeCount] = useState(0);
   const [reactionPending, setReactionPending] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [subscriptionSuccess, setSubscriptionSuccess] = useState(false);
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [expandedReplies, setExpandedReplies] = useState({});
   const [commentDraft, setCommentDraft] = useState("");
@@ -441,7 +443,8 @@ const VideoPlayer = () => {
 
   // Subscribe toggle
   const handleSubscribe = async () => {
-    if (!authClient || !video) return;
+    if (!authClient || !video || subscriptionLoading) return;
+    setSubscriptionLoading(true);
     try {
       if (isSubscribed) {
         await authClient.delete(API_ENDPOINTS.SUBSCRIBE, {
@@ -454,8 +457,16 @@ const VideoPlayer = () => {
         });
         setIsSubscribed(true);
       }
+
+      setSubscriptionSuccess(true);
+      window.dispatchEvent(new Event("yt:subscriptions-updated"));
+      setTimeout(() => {
+        setSubscriptionSuccess(false);
+      }, 850);
     } catch (err) {
       console.error("[VideoPlayer] Subscribe toggle failed:", err);
+    } finally {
+      setSubscriptionLoading(false);
     }
   };
 
@@ -604,10 +615,13 @@ const VideoPlayer = () => {
               </div>
               {isAuthenticated && (
                 <button
-                  className={`video-player__subscribe-btn ${isSubscribed ? "video-player__subscribe-btn--subscribed" : ""}`}
+                  className={`video-player__subscribe-btn ${isSubscribed ? "video-player__subscribe-btn--subscribed" : ""} ${subscriptionLoading ? "video-player__subscribe-btn--loading" : ""} ${subscriptionSuccess ? "video-player__subscribe-btn--success" : ""}`}
                   onClick={handleSubscribe}
+                  disabled={subscriptionLoading}
                 >
-                  {isSubscribed ? "Subscribed" : "Subscribe"}
+                  <span className="video-player__subscribe-label">
+                    {isSubscribed ? "Subscribed" : "Subscribe"}
+                  </span>
                 </button>
               )}
             </div>

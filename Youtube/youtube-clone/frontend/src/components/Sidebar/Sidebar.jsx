@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   AiOutlineHome,
@@ -28,10 +28,42 @@ import {
 } from "react-icons/md";
 import { SiYoutubeshorts } from "react-icons/si";
 import { BiTrendingUp } from "react-icons/bi";
+import { useAuth } from "../../context";
+import { apiService } from "../../services";
+import { API_ENDPOINTS } from "../../config";
 import "./Sidebar.css";
 
 const Sidebar = ({ isCollapsed }) => {
   const location = useLocation();
+  const { isAuthenticated, session } = useAuth();
+  const [subscribedChannels, setSubscribedChannels] = useState([]);
+
+  const loadSubscriptions = useCallback(async () => {
+    if (!isAuthenticated || !session?.access_token) {
+      setSubscribedChannels([]);
+      return;
+    }
+
+    try {
+      const data = await apiService
+        .withAuth(session.access_token)
+        .get(API_ENDPOINTS.SUBSCRIPTIONS);
+
+      const channels = Array.isArray(data?.channels) ? data.channels : [];
+      const uniqueChannels = Array.from(
+        new Set(
+          channels
+            .map((name) => (name || "").trim())
+            .filter(Boolean)
+        )
+      );
+
+      setSubscribedChannels(uniqueChannels);
+    } catch (error) {
+      console.error("[Sidebar] Failed to load subscriptions:", error);
+      setSubscribedChannels([]);
+    }
+  }, [isAuthenticated, session?.access_token]);
 
   const isActive = (path) => location.pathname === path;
 
@@ -65,33 +97,40 @@ const Sidebar = ({ isCollapsed }) => {
     { icon: <AiOutlineLike />, text: "Liked videos", path: "/liked" },
   ];
 
-  const subscriptions = [
-    {
-      name: "Tech Academy",
-      avatar: "https://ui-avatars.com/api/?name=Tech+A&background=random&size=24",
-      id: "ch1",
-    },
-    {
-      name: "ChillBeats",
-      avatar: "https://ui-avatars.com/api/?name=Chill+B&background=random&size=24",
-      id: "ch2",
-    },
-    {
-      name: "Sports Central",
-      avatar: "https://ui-avatars.com/api/?name=Sports+C&background=random&size=24",
-      id: "ch3",
-    },
-    {
-      name: "GameMaster Pro",
-      avatar: "https://ui-avatars.com/api/?name=Game+M&background=random&size=24",
-      id: "ch4",
-    },
-    {
-      name: "Dev Simplified",
-      avatar: "https://ui-avatars.com/api/?name=Dev+S&background=random&size=24",
-      id: "ch7",
-    },
-  ];
+  useEffect(() => {
+    let cancelled = false;
+
+    loadSubscriptions().catch(() => {
+      if (!cancelled) {
+        setSubscribedChannels([]);
+      }
+    });
+
+    const handleSubscriptionsUpdated = () => {
+      loadSubscriptions().catch(() => {
+        if (!cancelled) {
+          setSubscribedChannels([]);
+        }
+      });
+    };
+
+    window.addEventListener("yt:subscriptions-updated", handleSubscriptionsUpdated);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener("yt:subscriptions-updated", handleSubscriptionsUpdated);
+    };
+  }, [loadSubscriptions]);
+
+  const subscriptions = useMemo(
+    () =>
+      subscribedChannels.map((name) => ({
+        id: name,
+        name,
+        avatar: `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&size=24&background=random&color=fff&rounded=true&bold=true`,
+      })),
+    [subscribedChannels]
+  );
 
   const exploreLinks = [
     { icon: <AiOutlineFire />, text: "Trending", path: "/trending" },
@@ -148,26 +187,30 @@ const Sidebar = ({ isCollapsed }) => {
         ))}
       </div>
 
-      <hr className="sidebar__hr" />
+      {subscriptions.length > 0 && (
+        <>
+          <hr className="sidebar__hr" />
 
-      {/* Subscriptions */}
-      <div className="sidebar__section">
-        <div className="sidebar__section-title">Subscriptions</div>
-        {subscriptions.map((sub) => (
-          <Link
-            key={sub.id}
-            to={`/channel/${encodeURIComponent(sub.name)}`}
-            className="sidebar__link"
-          >
-            <img
-              className="sidebar__sub-avatar"
-              src={sub.avatar}
-              alt={sub.name}
-            />
-            <span className="sidebar__link-text">{sub.name}</span>
-          </Link>
-        ))}
-      </div>
+          {/* Subscriptions */}
+          <div className="sidebar__section">
+            <div className="sidebar__section-title">Subscriptions</div>
+            {subscriptions.map((sub) => (
+              <Link
+                key={sub.id}
+                to={`/channel/${encodeURIComponent(sub.name)}`}
+                className="sidebar__link"
+              >
+                <img
+                  className="sidebar__sub-avatar"
+                  src={sub.avatar}
+                  alt={sub.name}
+                />
+                <span className="sidebar__link-text">{sub.name}</span>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
 
       <hr className="sidebar__hr" />
 

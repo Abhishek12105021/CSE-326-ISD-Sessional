@@ -115,6 +115,7 @@ const Search = () => {
         setSubscriptionSuccessNames((prev) =>
           prev.includes(channelName) ? prev : [...prev, channelName]
         );
+        window.dispatchEvent(new Event("yt:subscriptions-updated"));
         setTimeout(() => {
           setSubscriptionSuccessNames((prev) =>
             prev.filter((name) => name !== channelName)

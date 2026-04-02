@@ -177,6 +177,13 @@
   transition: background-color 0.2s, color 0.2s;
 }
 
+.video-player__subscribe-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
 .video-player__subscribe-btn:hover {
   background-color: var(--text-secondary);
 }
@@ -184,6 +191,110 @@
 .video-player__subscribe-btn--subscribed {
   background-color: var(--hover-bg);
   color: var(--text-primary);
+}
+
+.video-player__subscribe-btn--loading {
+  position: relative;
+  overflow: hidden;
+  animation: video-subscribe-bounce 0.45s ease;
+}
+
+.video-player__subscribe-btn--loading:disabled {
+  opacity: 1;
+  cursor: wait;
+}
+
+.video-player__subscribe-btn--loading .video-player__subscribe-label {
+  background: linear-gradient(90deg, #ff1f8f 0%, #ff7a00 25%, #ffe66d 50%, #21d4fd 75%, #b721ff 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: video-subscribe-rainbow 1.1s linear infinite;
+}
+
+.video-player__subscribe-btn--loading .video-player__subscribe-label::after {
+  content: "...";
+  display: inline-block;
+  margin-left: 2px;
+  font-weight: 700;
+  -webkit-text-fill-color: rgba(255, 255, 255, 0.95);
+  color: rgba(255, 255, 255, 0.95);
+  animation: video-subscribe-dots 0.9s steps(3, end) infinite;
+}
+
+.video-player__subscribe-btn--loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.32) 30%,
+    transparent 62%
+  );
+  transform: translateX(-140%);
+  animation: video-subscribe-sweep 1.05s ease-in-out infinite;
+}
+
+.video-player__subscribe-btn--success {
+  animation: video-subscribe-success 0.36s ease;
+}
+
+@keyframes video-subscribe-sweep {
+  from {
+    transform: translateX(-140%);
+  }
+  to {
+    transform: translateX(140%);
+  }
+}
+
+@keyframes video-subscribe-rainbow {
+  from {
+    background-position: 0% 50%;
+  }
+  to {
+    background-position: 220% 50%;
+  }
+}
+
+@keyframes video-subscribe-dots {
+  0% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.2;
+  }
+}
+
+@keyframes video-subscribe-bounce {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes video-subscribe-success {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.42);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 10px rgba(255, 0, 0, 0);
+  }
 }
 
 .video-player__action-buttons {
