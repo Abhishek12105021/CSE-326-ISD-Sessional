@@ -73,6 +73,9 @@
   border-radius: 50%;
   flex-shrink: 0;
   margin-top: 2px;
+  box-shadow:
+    0 0 0 1px rgba(255, 107, 107, 0.95),
+    0 0 0 2px rgba(255, 230, 109, 0.82);
 }
 
 .video-card__avatar-fallback {
@@ -87,6 +90,7 @@
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   transition: transform 0.2s ease;
   cursor: pointer;
+  border: 1px solid rgba(255, 107, 107, 0.95);
 }
 
 .video-card__avatar-fallback:hover {

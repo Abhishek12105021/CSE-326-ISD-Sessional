@@ -3,7 +3,7 @@
  */
 
 export const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:8000";
+  import.meta.env.VITE_API_URL || "http://localhost:8123";
 
 export const API_ENDPOINTS = {
   // Auth
@@ -48,6 +48,7 @@ export const API_ENDPOINTS = {
   SEARCH_BY_CATEGORY_RELOAD: "/api/reload-search-by-category",
   SEARCH_BY_REGION: "/api/search-by-region",
   SEARCH_BY_REGION_RELOAD: "/api/reload-search-by-region",
+  SEARCH_CHANNELS: "/api/search-channels",
 
   // Recommendations
   RECOMMEND: "/api/recommend",

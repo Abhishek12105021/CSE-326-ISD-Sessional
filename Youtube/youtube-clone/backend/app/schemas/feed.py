@@ -159,6 +159,29 @@ class AllChannelsResponse(BaseModel):
     total: int
 
 
+class ChannelSearchRequest(BaseModel):
+    """Request to search channels by text query"""
+    q: str
+    limit: int = 50
+
+
+class ChannelSearchResult(BaseModel):
+    """Single channel search result"""
+    id: str
+    name: str
+    handle: str
+    description: str
+    verified: bool
+    video_count: int
+    avatar: str
+
+
+class ChannelSearchResponse(BaseModel):
+    """Response containing matching channels"""
+    channels: list[ChannelSearchResult]
+    total: int
+
+
 # ======================== RELOAD FEED (LAZY LOADING) ========================
 
 

@@ -1327,6 +1327,51 @@ async def get_all_channels() -> list[str]:
         return sorted(set(row["channel_title"] for row in rows if row.get("channel_title")))
 
 
+async def get_channel_stats(channel_title: str) -> Optional[dict]:
+    """
+    Fetch aggregate stats for a single channel title.
+
+    Returns:
+        {
+            "channel_title": str,
+            "video_count": int,
+            "views_sum": int,
+            "likes_sum": int,
+        }
+    """
+    if not channel_title:
+        return None
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(
+            f"{REST_URL}/videos",
+            headers=HEADERS,
+            params={
+                "select": "views,likes",
+                "channel_title": f"eq.{channel_title}",
+                "limit": 5000,
+            },
+        )
+        response.raise_for_status()
+        rows = response.json()
+
+        video_count = 0
+        views_sum = 0
+        likes_sum = 0
+
+        for row in rows:
+            video_count += 1
+            views_sum += int(row.get("views") or 0)
+            likes_sum += int(row.get("likes") or 0)
+
+        return {
+            "channel_title": channel_title,
+            "video_count": video_count,
+            "views_sum": views_sum,
+            "likes_sum": likes_sum,
+        }
+
+
 async def get_user_subscribed_channels(user_id: str, limit: int = 100) -> list[str]:
     """
     Fetch all channels subscribed by user.

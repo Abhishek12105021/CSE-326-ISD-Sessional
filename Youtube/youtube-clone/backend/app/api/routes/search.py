@@ -15,15 +15,16 @@ Endpoints:
 """
 from fastapi import APIRouter, Query, HTTPException, status
 import asyncio
+import re
 import numpy as np
 from uuid import UUID
 from typing import Optional
 import time
 
 from app.core import embedding_service, faiss_manager
-from app.db import get_videos_metadata_by_uuids, get_videos_by_categories, get_videos_by_regions
-from app.schemas.feed import VideoResponse, ChannelInfo, SearchReloadRequest, ReloadRecommendRequest, CategorySearchRequest, RegionSearchRequest, FilterHomeFeedRequest
-from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
+from app.db import get_videos_metadata_by_uuids, get_videos_by_categories, get_videos_by_regions, get_all_channels, get_channel_stats
+from app.schemas.feed import VideoResponse, ChannelInfo, SearchReloadRequest, ReloadRecommendRequest, CategorySearchRequest, RegionSearchRequest, FilterHomeFeedRequest, ChannelSearchRequest, ChannelSearchResponse, ChannelSearchResult
+from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, generate_channel_handle, generate_channel_description, is_verified
 
 router = APIRouter()
 
@@ -48,6 +49,71 @@ def transform_video(video: dict) -> VideoResponse:
         category=video.get("category_name", "Unknown"),
         velocity_score=video.get("velocity_score")
     )
+
+
+def _tokenize_query(query: str) -> list[str]:
+    return [token for token in re.findall(r"[a-z0-9]+", query.lower()) if token]
+
+
+@router.post("/search-channels", response_model=ChannelSearchResponse)
+async def search_channels(request: ChannelSearchRequest):
+    """
+    Search channels using permissive ANY-word matching.
+
+    Returns channels alphabetically ordered with lightweight stats so the frontend
+    can surface destination pages alongside video results.
+    """
+    query = request.q.strip()
+    if not query:
+        return ChannelSearchResponse(channels=[], total=0)
+
+    query_words = _tokenize_query(query)
+    if not query_words:
+        return ChannelSearchResponse(channels=[], total=0)
+
+    try:
+        all_channels = await get_all_channels()
+        matched_channels = [
+            channel_name
+            for channel_name in all_channels
+            if any(term in channel_name.lower() for term in query_words)
+        ]
+
+        if not matched_channels:
+            return ChannelSearchResponse(channels=[], total=0)
+
+        channel_stats = await asyncio.gather(
+            *(get_channel_stats(channel_name) for channel_name in matched_channels)
+        )
+
+        results: list[ChannelSearchResult] = []
+        for stats in channel_stats:
+            if not stats:
+                continue
+
+            channel_name = stats["channel_title"]
+            results.append(
+                ChannelSearchResult(
+                    id=channel_name,
+                    name=channel_name,
+                    handle=generate_channel_handle(channel_name),
+                    description=generate_channel_description(channel_name),
+                    verified=stats["views_sum"] > 100000 or stats["likes_sum"] > 5000,
+                    video_count=stats["video_count"],
+                    avatar=generate_channel_avatar(channel_name),
+                )
+            )
+
+        results.sort(key=lambda item: item.name.lower())
+        limited_results = results[:request.limit]
+
+        return ChannelSearchResponse(channels=limited_results, total=len(results))
+    except Exception as e:
+        print(f"[SEARCH CHANNELS ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Channel search failed"
+        )
 
 
 @router.post("/search")

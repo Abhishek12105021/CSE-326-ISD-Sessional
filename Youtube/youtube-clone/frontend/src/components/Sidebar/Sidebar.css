@@ -108,6 +108,9 @@
   height: 24px;
   border-radius: 50%;
   min-width: 24px;
+  box-shadow:
+    0 0 0 1px rgba(255, 107, 107, 0.95),
+    0 0 0 2px rgba(255, 230, 109, 0.82);
 }
 
 @media (max-width: 1312px) {

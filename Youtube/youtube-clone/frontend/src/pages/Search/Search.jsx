@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { MdVerified, MdOutlineTune } from "react-icons/md";
+import { useAuth } from "../../context";
 import { apiService } from "../../services";
 import { API_ENDPOINTS } from "../../config";
 import "./Search.css";
@@ -22,14 +23,20 @@ const HARDCODED_REGIONS = [
 const Search = () => {
   const [searchParams] = useSearchParams();
   const query = searchParams.get("q") || "";
+  const { isAuthenticated, session } = useAuth();
 
   const [results, setResults] = useState([]);
+  const [channels, setChannels] = useState([]);
+  const [subscribedChannelNames, setSubscribedChannelNames] = useState([]);
+  const [subscriptionBusyNames, setSubscriptionBusyNames] = useState([]);
+  const [subscriptionSuccessNames, setSubscriptionSuccessNames] = useState([]);
   const [categories, setCategories] = useState(["All"]);
   const [loading, setLoading] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [showAllChannels, setShowAllChannels] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
   const [categorySearch, setCategorySearch] = useState("");
   const [dropdownCategories, setDropdownCategories] = useState([]);
@@ -57,6 +64,70 @@ const Search = () => {
   const hasAnyAppliedFilter =
     appliedCategories.length > 0 || appliedRegions.length > 0;
   const totalAppliedCount = appliedCategories.length + appliedRegions.length;
+  const visibleChannels = showAllChannels ? channels : channels.slice(0, 3);
+  const hasHiddenChannels = channels.length > 3;
+  const isChannelSubscribed = useCallback(
+    (channelName) => subscribedChannelNames.includes(channelName),
+    [subscribedChannelNames]
+  );
+
+  const loadSubscribedChannels = useCallback(async () => {
+    if (!isAuthenticated || !session?.access_token) {
+      setSubscribedChannelNames([]);
+      return;
+    }
+
+    try {
+      const subscriptionData = await apiService
+        .withAuth(session.access_token)
+        .get(API_ENDPOINTS.SUBSCRIPTIONS);
+      setSubscribedChannelNames(subscriptionData?.channels || []);
+    } catch (error) {
+      console.error("[Search] Failed to load subscriptions:", error);
+      setSubscribedChannelNames([]);
+    }
+  }, [isAuthenticated, session?.access_token]);
+
+  useEffect(() => {
+    loadSubscribedChannels();
+  }, [loadSubscribedChannels]);
+
+  const toggleChannelSubscription = useCallback(
+    async (channelName) => {
+      if (!isAuthenticated || !session?.access_token || !channelName) return;
+
+      setSubscriptionBusyNames((prev) =>
+        prev.includes(channelName) ? prev : [...prev, channelName]
+      );
+
+      try {
+        const client = apiService.withAuth(session.access_token);
+        const currentlySubscribed = isChannelSubscribed(channelName);
+
+        if (currentlySubscribed) {
+          await client.delete(API_ENDPOINTS.SUBSCRIBE, { channel_name: channelName });
+          setSubscribedChannelNames((prev) => prev.filter((name) => name !== channelName));
+        } else {
+          await client.post(API_ENDPOINTS.SUBSCRIBE, { channel_name: channelName });
+          setSubscribedChannelNames((prev) => [...prev, channelName]);
+        }
+
+        setSubscriptionSuccessNames((prev) =>
+          prev.includes(channelName) ? prev : [...prev, channelName]
+        );
+        setTimeout(() => {
+          setSubscriptionSuccessNames((prev) =>
+            prev.filter((name) => name !== channelName)
+          );
+        }, 850);
+      } catch (error) {
+        console.error("[Search] Channel subscription toggle failed:", error);
+      } finally {
+        setSubscriptionBusyNames((prev) => prev.filter((name) => name !== channelName));
+      }
+    },
+    [isAuthenticated, session?.access_token, isChannelSubscribed]
+  );
 
   const getHqThumbnail = (thumbnailUrl) => {
     if (!thumbnailUrl) return "";
@@ -117,7 +188,9 @@ const Search = () => {
     async (append = false) => {
       if (!query.trim()) {
         setResults([]);
+        setChannels([]);
         setHasMore(false);
+        setShowAllChannels(false);
         return;
       }
 
@@ -129,32 +202,47 @@ const Search = () => {
       }
 
       try {
-        let data;
         const excludedIds = append ? shownIds.current : [];
 
-        if (hasAnyAppliedFilter) {
-          const endpoint = append
-            ? API_ENDPOINTS.FILTER_HOMEFEED_RELOAD
-            : API_ENDPOINTS.FILTER_HOMEFEED;
+        let data;
+        let channelData = null;
 
-          data = await apiService.post(endpoint, {
-            categories: appliedCategories,
-            regions: appliedRegions,
-            excluded_video_ids: excludedIds,
-            limit: LIMIT,
-          });
+        if (append) {
+          data = hasAnyAppliedFilter
+            ? await apiService.post(API_ENDPOINTS.FILTER_HOMEFEED_RELOAD, {
+                categories: appliedCategories,
+                regions: appliedRegions,
+                excluded_video_ids: excludedIds,
+                limit: LIMIT,
+              })
+            : await apiService.post(API_ENDPOINTS.SEARCH_RELOAD, {
+                q: query,
+                excluded_video_ids: excludedIds,
+                limit: LIMIT,
+              });
         } else {
-          if (append) {
-            data = await apiService.post(API_ENDPOINTS.SEARCH_RELOAD, {
+          const videoRequest = hasAnyAppliedFilter
+            ? apiService.post(API_ENDPOINTS.FILTER_HOMEFEED, {
+                categories: appliedCategories,
+                regions: appliedRegions,
+                excluded_video_ids: excludedIds,
+                limit: LIMIT,
+              })
+            : apiService.post(
+                `${API_ENDPOINTS.SEARCH}?q=${encodeURIComponent(query)}&limit=${LIMIT}`
+              );
+
+          const [videoResult, channelResult] = await Promise.allSettled([
+            videoRequest,
+            apiService.post(API_ENDPOINTS.SEARCH_CHANNELS, {
               q: query,
-              excluded_video_ids: excludedIds,
-              limit: LIMIT,
-            });
-          } else {
-            data = await apiService.post(
-              `${API_ENDPOINTS.SEARCH}?q=${encodeURIComponent(query)}&limit=${LIMIT}`
-            );
-          }
+              limit: 100,
+            }),
+          ]);
+
+          data = videoResult.status === "fulfilled" ? videoResult.value : null;
+          channelData =
+            channelResult.status === "fulfilled" ? channelResult.value : null;
         }
 
         const sourceVideos = data?.videos || [];
@@ -171,6 +259,8 @@ const Search = () => {
           setResults((prev) => [...prev, ...videos]);
         } else {
           setResults(videos);
+          setChannels(channelData?.channels || []);
+          setShowAllChannels(false);
         }
 
         if (hasAnyAppliedFilter && typeof data?.has_more === "boolean") {
@@ -182,7 +272,9 @@ const Search = () => {
         console.error("[Search] Failed:", err);
         if (!append) {
           setResults([]);
+          setChannels([]);
           setHasMore(false);
+          setShowAllChannels(false);
         }
       } finally {
         if (append) {
@@ -353,6 +445,88 @@ const Search = () => {
         </button>
       </div>
 
+      {channels.length > 0 && (
+        <section className="search-channels-section">
+          <div className="search-channels-section__header">
+            <div>
+              <h3 className="search-channels-title">Channels</h3>
+              <p className="search-channels-subtitle">
+                {channels.length} channel{channels.length === 1 ? "" : "s"} found
+              </p>
+            </div>
+          </div>
+
+          <div className="search-channels-grid">
+            {visibleChannels.map((channel) => (
+              <article key={channel.id} className="search-channel-card">
+                <Link
+                  to={`/channel/${encodeURIComponent(channel.id)}`}
+                  className="search-channel-card__main"
+                >
+                  <div className="search-channel-card__avatar-wrap">
+                    <img
+                      src={channel.avatar}
+                      alt={channel.name}
+                      className="search-channel-card__avatar"
+                    />
+                  </div>
+                  <div className="search-channel-card__body">
+                    <div className="search-channel-card__title-row">
+                      <h4 className="search-channel-card__name">{channel.name}</h4>
+                      {channel.verified && (
+                        <span className="search-channel-card__verified" aria-label="Verified channel">
+                          <MdVerified />
+                        </span>
+                      )}
+                    </div>
+                    <p className="search-channel-card__description">
+                      {channel.description}
+                    </p>
+                    <p className="search-channel-card__meta">
+                      <span className="search-channel-card__handle">
+                        {channel.handle || `@${channel.id.toLowerCase().replace(/\s+/g, "")}`}
+                      </span>
+                      <span className="search-channel-card__dot">•</span>
+                      <span>
+                        {channel.video_count} video{channel.video_count === 1 ? "" : "s"}
+                      </span>
+                    </p>
+                  </div>
+                </Link>
+                {isAuthenticated && (
+                  <button
+                    type="button"
+                    className={`search-channel-card__subscribe-btn ${isChannelSubscribed(channel.id) ? "search-channel-card__subscribe-btn--subscribed" : ""} ${subscriptionBusyNames.includes(channel.id) ? "search-channel-card__subscribe-btn--loading" : ""} ${subscriptionSuccessNames.includes(channel.id) ? "search-channel-card__subscribe-btn--success" : ""}`}
+                    onClick={() => toggleChannelSubscription(channel.id)}
+                    disabled={subscriptionBusyNames.includes(channel.id)}
+                  >
+                    <span className="search-channel-card__subscribe-label">
+                      {isChannelSubscribed(channel.id) ? "Subscribed" : "Subscribe"}
+                    </span>
+                  </button>
+                )}
+              </article>
+            ))}
+          </div>
+
+          {hasHiddenChannels && (
+            <div className="search-channels-expand">
+              <button
+                type="button"
+                className="search-channels-expand__button"
+                onClick={() => setShowAllChannels((prev) => !prev)}
+                aria-expanded={showAllChannels}
+              >
+                {showAllChannels ? "Show less" : "Show more"}
+                <span className={`search-channels-expand__chevron ${showAllChannels ? "search-channels-expand__chevron--up" : ""}`}>
+                  ˅
+                </span>
+              </button>
+            </div>
+          )}
+        </section>
+      )}
+
       {isDropdownOpen && (
         <div
           ref={dropdownRef}
@@ -491,6 +665,17 @@ const Search = () => {
         </div>
       )}
 
+      {channels.length > 0 && <div className="search-results-divider" />}
+
+      {query.trim() && results.length === 0 && channels.length > 0 && (
+        <div className="search-page__empty-videos">
+          <h3>No videos matched your search</h3>
+          <p>
+            Channel matches are shown above. Try a broader query if you want video results.
+          </p>
+        </div>
+      )}
+
       {results.length > 0 ? (
         <>
           {results.map((video) => (
@@ -549,7 +734,7 @@ const Search = () => {
             </div>
           )}
         </>
-      ) : query.trim() ? (
+      ) : query.trim() && channels.length === 0 ? (
         <div className="search-page__no-results">
           <h3>{hasAnyAppliedFilter ? "No videos" : `No results found for "${query}"`}</h3>
           <p>

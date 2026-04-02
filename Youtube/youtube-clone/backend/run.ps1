@@ -40,5 +40,7 @@ if (-not (Test-Path $venvPython)) {
 Write-Host "Installing backend dependencies..."
 & $venvPython -m pip install -r requirements.txt
 
-Write-Host "Starting backend server on http://127.0.0.1:8000 ..."
-& $venvPython -m uvicorn app.main:app --reload --port 8000
+$backendPort = if ($env:BACKEND_PORT) { $env:BACKEND_PORT } else { 8123 }
+
+Write-Host "Starting backend server on http://127.0.0.1:$backendPort ..."
+& $venvPython -m uvicorn app.main:app --reload --port $backendPort

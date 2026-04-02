@@ -51,13 +51,20 @@
   height: 128px;
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow:
+    0 0 0 2px rgba(255, 107, 107, 0.95),
+    0 0 0 5px rgba(255, 230, 109, 0.82);
 }
 
 .channel-page__avatar-fallback {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.14);
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.14),
+    0 0 0 2px rgba(255, 107, 107, 0.95),
+    0 0 0 5px rgba(255, 230, 109, 0.82);
+  border: 2px solid rgba(255, 107, 107, 0.95);
 }
 
 .channel-page__avatar-initials {
