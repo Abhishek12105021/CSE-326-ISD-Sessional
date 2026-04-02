@@ -12,7 +12,7 @@ const LIMIT = 12;
 const Channel = () => {
   const { channelName: routeChannelName } = useParams();
   const channelName = decodeURIComponent(routeChannelName || "");
-  const { isAuthenticated, session } = useAuth();
+  const { isAuthenticated, session, user } = useAuth();
 
   const [channel, setChannel] = useState(null);
   const [activeTab, setActiveTab] = useState("Videos");
@@ -26,6 +26,14 @@ const Channel = () => {
 
   const shownIds = useRef([]);
   const loadMoreRef = useRef(null);
+
+  const userDisplayName =
+    user?.user_metadata?.full_name ||
+    user?.user_metadata?.name ||
+    user?.email?.split("@")[0] ||
+    "My Channel";
+  const isOwnChannelRoute = channelName.trim().toLowerCase() === "mine";
+  const requestedChannelName = isOwnChannelRoute ? userDisplayName : channelName;
 
   const generateColorHash = (value) => {
     const str = value || "Channel";
@@ -58,12 +66,12 @@ const Channel = () => {
       .slice(0, 2);
   };
 
-  const channelColors = generateColorHash(channelName || channel?.name);
-  const channelInitials = getInitials(channelName || channel?.name);
+  const channelColors = generateColorHash(requestedChannelName || channel?.name);
+  const channelInitials = getInitials(requestedChannelName || channel?.name);
 
   const fetchChannel = useCallback(
     async (append = false) => {
-      if (!channelName.trim()) {
+      if (!requestedChannelName.trim()) {
         setLoading(false);
         setError("Channel name is missing.");
         return;
@@ -79,7 +87,7 @@ const Channel = () => {
 
       try {
         const data = await apiService.post(API_ENDPOINTS.CHANNEL, {
-          channel_name: channelName,
+          channel_name: requestedChannelName,
           excluded_video_ids: append ? shownIds.current : [],
           limit: LIMIT,
         });
@@ -97,17 +105,26 @@ const Channel = () => {
               .withAuth(session.access_token)
               .get(API_ENDPOINTS.SUBSCRIPTIONS);
             const subscribedChannels = subscriptionData?.channels || [];
-            setIsSubscribed(subscribedChannels.includes(channelName));
+            setIsSubscribed(subscribedChannels.includes(requestedChannelName));
           } catch (subscriptionError) {
             console.error("[Channel] Failed to fetch subscription state:", subscriptionError);
           }
         }
       } catch (err) {
         console.error("[Channel] Failed to fetch channel page:", err);
-        setChannel(null);
+        if (isOwnChannelRoute) {
+          setChannel({
+            name: userDisplayName,
+            verified: false,
+            id: "mine",
+          });
+          setError("");
+        } else {
+          setChannel(null);
+          setError("This channel has no videos yet.");
+        }
         setVideos([]);
         setHasMore(false);
-        setError("This channel has no videos yet.");
       } finally {
         if (append) {
           setLoadingMore(false);
@@ -116,20 +133,20 @@ const Channel = () => {
         }
       }
     },
-    [channelName]
+    [isAuthenticated, isOwnChannelRoute, requestedChannelName, session?.access_token, userDisplayName]
   );
 
   const handleSubscribe = async () => {
-    if (!isAuthenticated || !session?.access_token || !channelName) return;
+    if (!isAuthenticated || !session?.access_token || !requestedChannelName) return;
 
     setSubscriptionLoading(true);
     try {
       const client = apiService.withAuth(session.access_token);
       if (isSubscribed) {
-        await client.delete(API_ENDPOINTS.SUBSCRIBE, { channel_name: channelName });
+        await client.delete(API_ENDPOINTS.SUBSCRIBE, { channel_name: requestedChannelName });
         setIsSubscribed(false);
       } else {
-        await client.post(API_ENDPOINTS.SUBSCRIBE, { channel_name: channelName });
+        await client.post(API_ENDPOINTS.SUBSCRIBE, { channel_name: requestedChannelName });
         setIsSubscribed(true);
       }
     } catch (err) {
@@ -167,9 +184,9 @@ const Channel = () => {
   const tabs = ["Videos", "About"];
 
   const channelInfo = channel || {
-    name: channelName || "Channel",
+    name: requestedChannelName || "Channel",
     verified: false,
-    id: channelName,
+    id: requestedChannelName,
   };
 
   if (loading) {
@@ -202,7 +219,7 @@ const Channel = () => {
           background: `linear-gradient(135deg, ${channelColors[0]} 0%, ${channelColors[1]} 100%)`,
         }}
       >
-        <h2 className="channel-page__banner-text">{channelName}</h2>
+        <h2 className="channel-page__banner-text">{channelInfo.name}</h2>
       </div>
 
       <div className="channel-page__header">
@@ -262,8 +279,37 @@ const Channel = () => {
           videos.map((video) => <VideoCard key={video.id} video={video} />)
           ) : (
             <div className="channel-page__empty-state">
-              <h3>No videos</h3>
-              <p>This channel does not have any uploads in the database yet.</p>
+              {isOwnChannelRoute ? (
+                <>
+                  <h3>Your channel is ready</h3>
+                  <p>
+                    @{channelInfo.name.toLowerCase().replace(/\s/g, "")} is set up. Add your first upload
+                    and your videos will appear here.
+                  </p>
+                  <div className="channel-page__setup-list">
+                    <div className="channel-page__setup-item">
+                      <strong>Profile</strong>
+                      <span>Name and avatar are ready</span>
+                    </div>
+                    <div className="channel-page__setup-item">
+                      <strong>Channel Handle</strong>
+                      <span>@{channelInfo.name.toLowerCase().replace(/\s/g, "")}</span>
+                    </div>
+                    <div className="channel-page__setup-item">
+                      <strong>Uploads</strong>
+                      <span>0 videos published</span>
+                    </div>
+                  </div>
+                  <Link to="/" className="channel-page__empty-link">
+                    Explore Home Feed
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <h3>No videos</h3>
+                  <p>This channel does not have any uploads in the database yet.</p>
+                </>
+              )}
             </div>
           )
         ) : (

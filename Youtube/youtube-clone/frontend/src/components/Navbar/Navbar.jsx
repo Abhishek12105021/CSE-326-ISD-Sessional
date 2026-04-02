@@ -6,7 +6,7 @@ import {
   AiOutlineBell,
   AiOutlineVideoCameraAdd,
 } from "react-icons/ai";
-import { BsYoutube, BsMic, BsSun, BsMoon } from "react-icons/bs";
+import { BsMic, BsSun, BsMoon } from "react-icons/bs";
 import { FaUserCircle } from "react-icons/fa";
 import { useAuth, useTheme } from "../../context";
 import { useClickOutside } from "../../hooks";
@@ -59,7 +59,9 @@ const Navbar = ({ toggleSidebar }) => {
           <AiOutlineMenu />
         </button>
         <Link to="/" className="navbar__logo">
-          <BsYoutube className="navbar__logo-icon" />
+          <span className="navbar__logo-mark" aria-hidden="true">
+            <span className="navbar__logo-play" />
+          </span>
           <span className="navbar__logo-text">YouTube</span>
         </Link>
       </div>

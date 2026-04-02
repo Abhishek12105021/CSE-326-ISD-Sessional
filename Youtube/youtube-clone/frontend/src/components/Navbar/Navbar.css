@@ -41,26 +41,39 @@
 .navbar__logo {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 6px;
   text-decoration: none;
   color: var(--text-primary);
 }
 
-.navbar__logo svg {
-  width: 90px;
-  height: 20px;
+.navbar__logo-mark {
+  width: 30px;
+  height: 21px;
+  border-radius: 7px;
+  background: #ff0000;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  position: relative;
 }
 
-.navbar__logo-icon {
-  color: #ff0000;
-  font-size: 28px;
+.navbar__logo-play {
+  width: 0;
+  height: 0;
+  border-top: 5.5px solid transparent;
+  border-bottom: 5.5px solid transparent;
+  border-left: 9px solid #fff;
+  margin-left: 1px;
 }
 
 .navbar__logo-text {
   font-size: 20px;
   font-weight: 700;
-  letter-spacing: -1.5px;
+  letter-spacing: -0.4px;
+  line-height: 1;
   color: var(--text-primary);
+  font-family: "Roboto", "Segoe UI", sans-serif;
 }
 
 .navbar__center {

@@ -187,6 +187,34 @@
   margin-bottom: 8px;
 }
 
+.channel-page__setup-list {
+  width: min(560px, 100%);
+  margin: 16px auto 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.channel-page__setup-item {
+  text-align: left;
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.channel-page__setup-item strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-primary);
+  margin-bottom: 3px;
+}
+
+.channel-page__setup-item span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
 .channel-page__empty-link {
   display: inline-flex;
   margin-top: 12px;

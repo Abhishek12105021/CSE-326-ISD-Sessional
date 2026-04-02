@@ -58,7 +58,7 @@ const Sidebar = ({ isCollapsed }) => {
   ];
 
   const youLinks = [
-    { icon: <MdOutlineVideoLibrary />, text: "Your channel", path: "/channel/you" },
+    { icon: <MdOutlineVideoLibrary />, text: "Your channel", path: "/channel/mine" },
     { icon: <MdOutlineHistory />, text: "History", path: "/history" },
     { icon: <AiOutlinePlaySquare />, text: "Playlists", path: "/playlists" },
     { icon: <MdOutlineWatchLater />, text: "Watch later", path: "/watchlater" },
