@@ -37,7 +37,7 @@ const AppLayout = ({ sidebarCollapsed, toggleSidebar }) => {
               <Route path="/video/:id" element={<VideoPlayer />} />
             )}
             {features.channel && (
-              <Route path="/channel/:channelId" element={<Channel />} />
+              <Route path="/channel/:channelName" element={<Channel />} />
             )}
             {features.search && (
               <Route path="/search" element={<Search />} />

@@ -555,7 +555,7 @@ const VideoPlayer = () => {
           <div className="video-player__actions-row">
             {/* Channel Info */}
             <div className="video-player__channel-info">
-              <Link to={`/channel/${video.channel?.id}`}>
+              <Link to={`/channel/${encodeURIComponent(video.channel?.name || "")}`}>
                 <div
                   className="video-player__channel-avatar-fallback"
                   style={{
@@ -570,7 +570,7 @@ const VideoPlayer = () => {
               </Link>
               <div className="video-player__channel-text">
                 <Link
-                  to={`/channel/${video.channel?.id}`}
+                  to={`/channel/${encodeURIComponent(video.channel?.name || "")}`}
                   className="video-player__channel-name"
                 >
                   {video.channel?.name}

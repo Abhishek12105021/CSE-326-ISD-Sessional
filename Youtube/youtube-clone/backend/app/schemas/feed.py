@@ -188,6 +188,21 @@ class SearchReloadRequest(BaseModel):
     limit: int = 25  # Number of new videos to return (20-30)
 
 
+class ChannelPageRequest(BaseModel):
+    """Request to fetch/paginate videos for a channel derived from channel_title."""
+    channel_name: str
+    excluded_video_ids: list[str] = []
+    limit: int = 30
+
+
+class ChannelPageResponse(BaseModel):
+    """Response for a derived channel page backed by the videos table."""
+    channel: ChannelInfo
+    videos: list[VideoResponse]
+    total: int
+    has_more: bool = False
+
+
 class CategorySearchRequest(BaseModel):
     """Request to fetch/paginate videos filtered by one or more categories"""
     categories: list[str]  # e.g. ["Music", "Gaming"]

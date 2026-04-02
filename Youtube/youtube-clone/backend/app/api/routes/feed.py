@@ -9,7 +9,7 @@ from app.schemas.feed import (
     DislikeVideoRequest, DislikeResponse, DislikesListResponse,
     SubscribeRequest, SubscriptionResponse, SubscribedChannelsResponse, AllChannelsResponse,
     WatchEventRequest, WatchEventResponse, VideoMetadataRequest, VideoMetadataResponse,
-    DeleteWatchHistoryRequest, ReloadFeedRequest
+    DeleteWatchHistoryRequest, ReloadFeedRequest, ChannelPageRequest, ChannelPageResponse
 )
 from app.core.recommendation import (
     get_taste_vector_for_feed,
@@ -24,7 +24,8 @@ from app.db import (
     get_all_channels, get_user_subscribed_channels, subscribe, unsubscribe, is_subscribed,
     insert_watch_history, update_watch_history, delete_watch_history, get_watch_record_by_id,
     increment_video_views, decrement_video_views,
-    get_user_liked_videos_with_timestamps, get_user_by_id
+    get_user_liked_videos_with_timestamps, get_user_by_id,
+    get_videos_by_channel_title, get_channel_video_count
 )
 from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
 
@@ -51,6 +52,75 @@ def transform_video(video: dict) -> VideoResponse:
         category=video.get("category_name", "Unknown"),
         velocity_score=video.get("velocity_score")
     )
+
+
+@router.post("/channel", response_model=ChannelPageResponse)
+async def get_channel_page(request: ChannelPageRequest):
+    """
+    Resolve a channel page from the videos table using channel_title only.
+
+    The app has no dedicated channel table, so this endpoint derives the channel
+    header and video list directly from matching video rows.
+    """
+    channel_name = request.channel_name.strip()
+    if not channel_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="channel_name is required"
+        )
+
+    try:
+        limit = min(request.limit, 50)
+        excluded_ids = request.excluded_video_ids if request.excluded_video_ids else []
+
+        print(f"[CHANNEL LOOKUP] channel_name='{channel_name}', excluded={len(excluded_ids)}, limit={limit}")
+
+        total_count = await get_channel_video_count(channel_name)
+        if total_count == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Channel '{channel_name}' not found"
+            )
+
+        representative_rows = await get_videos_by_channel_title(channel_name, limit=1)
+        if not representative_rows:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Channel '{channel_name}' not found"
+            )
+
+        videos_data = await get_videos_by_channel_title(
+            channel_title=channel_name,
+            excluded_ids=excluded_ids,
+            limit=limit,
+        )
+
+        channel_source = representative_rows[0]
+        channel = ChannelInfo(
+            name=channel_name,
+            avatar=generate_channel_avatar(channel_name),
+            verified=is_verified(channel_source.get("views", 0), channel_source.get("likes", 0)),
+            id=channel_name,
+        )
+
+        video_responses = [transform_video(v) for v in videos_data]
+        has_more = total_count > (len(set(excluded_ids)) + len(video_responses))
+
+        return {
+            "channel": channel,
+            "videos": video_responses,
+            "total": total_count,
+            "has_more": has_more,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[CHANNEL LOOKUP ERROR] {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Channel lookup failed"
+        )
 
 
 @router.get("/feed", response_model=FeedResponse)

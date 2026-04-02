@@ -102,7 +102,7 @@ const VideoCard = ({ video }) => {
         </div>
       </Link>
       <div className="video-card__info">
-        <Link to={`/channel/${video.channel.id}`}>
+        <Link to={`/channel/${encodeURIComponent(video.channel.name)}`}>
           <div
             className="video-card__avatar-fallback"
             style={{
@@ -117,7 +117,7 @@ const VideoCard = ({ video }) => {
             <h3 className="video-card__title">{video.title}</h3>
           </Link>
           <Link
-            to={`/channel/${video.channel.id}`}
+            to={`/channel/${encodeURIComponent(video.channel.name)}`}
             className="video-card__channel"
             style={{ textDecoration: "none" }}
           >

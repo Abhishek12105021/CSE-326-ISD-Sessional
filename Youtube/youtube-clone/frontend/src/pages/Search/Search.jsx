@@ -515,7 +515,7 @@ const Search = () => {
                   <span>{video.timestamp}</span>
                 </div>
                 <Link
-                  to={`/channel/${video.channel?.id}`}
+                  to={`/channel/${encodeURIComponent(video.channel?.name || "")}`}
                   className="search-result-card__channel"
                   style={{ textDecoration: "none" }}
                 >

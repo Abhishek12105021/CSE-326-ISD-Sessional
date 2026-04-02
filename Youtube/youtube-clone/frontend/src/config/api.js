@@ -53,6 +53,9 @@ export const API_ENDPOINTS = {
   RECOMMEND: "/api/recommend",
   RECOMMEND_RELOAD: "/api/reload-recommend",
 
+  // Channel
+  CHANNEL: "/api/channel",
+
   // Health
   HEALTH: "/health",
 };

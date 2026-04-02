@@ -156,7 +156,7 @@ const Sidebar = ({ isCollapsed }) => {
         {subscriptions.map((sub) => (
           <Link
             key={sub.id}
-            to={`/channel/${sub.id}`}
+            to={`/channel/${encodeURIComponent(sub.name)}`}
             className="sidebar__link"
           >
             <img
