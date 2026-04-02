@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { VideoCard } from "../../components";
 import { BsSliders } from "react-icons/bs";
 import { features } from "../../config";
@@ -22,7 +22,6 @@ const HARDCODED_REGIONS = [
 
 const LIMIT = 30;
 
-
 const Home = () => {
   const { isAuthenticated, session, guestId, region, getWatchedVideoIds } =
     useAuth();
@@ -41,7 +40,6 @@ const Home = () => {
   const [appliedCategories, setAppliedCategories] = useState([]);
   const [appliedRegions, setAppliedRegions] = useState([]);
 
-  const [regions, setRegions] = useState([]);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
   const [categorySearch, setCategorySearch] = useState("");
@@ -51,13 +49,21 @@ const Home = () => {
   const shownIds = useRef(new Set());
   const dropdownTriggerRef = useRef(null);
   const dropdownRef = useRef(null);
+  const loadMoreRef = useRef(null);
 
-  const dbCategories = categories.filter((cat) => cat !== "All");
-  const filteredDropdownCategories = categorySearch
-    ? dbCategories.filter((cat) =>
-        cat.toLowerCase().includes(categorySearch.toLowerCase()),
-      )
-    : dbCategories;
+  const dbCategories = useMemo(
+    () => categories.filter((cat) => cat !== "All"),
+    [categories],
+  );
+  const filteredDropdownCategories = useMemo(
+    () =>
+      categorySearch
+        ? dbCategories.filter((cat) =>
+            cat.toLowerCase().includes(categorySearch.toLowerCase()),
+          )
+        : dbCategories,
+    [dbCategories, categorySearch],
+  );
   const hasAppliedCategoryFilter = appliedCategories.length > 0;
   const hasAppliedRegionFilter = appliedRegions.length > 0;
   const hasAnyAppliedFilter = hasAppliedCategoryFilter || hasAppliedRegionFilter;
@@ -77,10 +83,6 @@ const Home = () => {
       .catch(() => {});
   }, []);
 
-  // Fetch regions once on mount (frontend hardcoded source)
-  useEffect(() => {
-    setRegions(HARDCODED_REGIONS);
-  }, []);
 
   // Fetch initial feed when auth state or region changes
   const fetchFeed = useCallback(async () => {
@@ -175,18 +177,11 @@ const Home = () => {
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, [isDropdownOpen]);
 
-  // Quick single-category click — instant filter
   const handleQuickCategoryClick = useCallback(
     async (category) => {
       setIsDropdownOpen(false);
 
       if (category === "All" || activeQuickCategory === category) {
-        // Reset to default feed
-        setActiveQuickCategory(null);
-        setAppliedCategories([]);
-        setAppliedRegions([]);
-        setDropdownCategories([]);
-        setDropdownRegions([]);
         await fetchFeed();
         return;
       }
@@ -219,7 +214,6 @@ const Home = () => {
     [activeQuickCategory, fetchFeed],
   );
 
-  // Dropdown: multi-category toggle
   const toggleDropdownCategory = useCallback(
     (category) => {
       setDropdownCategories((prev) => {
@@ -239,7 +233,6 @@ const Home = () => {
     [dbCategories],
   );
 
-  // Dropdown: region toggle
   const toggleDropdownRegion = useCallback((regionCode) => {
     setDropdownRegions((prev) => {
       if (prev.includes(regionCode)) {
@@ -249,7 +242,6 @@ const Home = () => {
     });
   }, []);
 
-  // Dropdown: apply button
   const applyDropdownFilters = useCallback(async () => {
     const cats = [...dropdownCategories];
     const regs = [...dropdownRegions];
@@ -349,17 +341,21 @@ const Home = () => {
     getWatchedVideoIds,
   ]);
 
-  // Scroll listener for infinite scroll
+  // Keep ref in sync with latest loadMore so the scroll listener never re-registers
+  useEffect(() => {
+    loadMoreRef.current = loadMore;
+  }, [loadMore]);
+
   useEffect(() => {
     const handleScroll = () => {
       const nearBottom =
         window.innerHeight + window.scrollY >=
         document.documentElement.scrollHeight - 600;
-      if (nearBottom) loadMore();
+      if (nearBottom) loadMoreRef.current?.();
     };
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [loadMore]);
+  }, []);
 
   if (loading) {
     return (
@@ -475,7 +471,7 @@ const Home = () => {
                   )}
                 </div>
                 <div className="region-dropdown__list">
-                  {regions.map((regionCode) => {
+                  {HARDCODED_REGIONS.map((regionCode) => {
                     const isSelected = dropdownRegions.includes(regionCode);
                     return (
                       <button

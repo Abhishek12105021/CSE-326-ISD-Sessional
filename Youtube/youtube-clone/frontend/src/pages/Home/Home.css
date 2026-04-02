@@ -1,11 +1,12 @@
 .home {
   padding: 0 24px;
+  overflow-x: clip; /* clip overflow without breaking sticky category bar */
 }
 
 .home__video-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
-  gap: 16px 16px;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 24px 16px;
 }
 
 .category-pill__label {
@@ -280,7 +281,8 @@
   }
 
   .home__video-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 20px 12px;
   }
 
   .region-dropdown {

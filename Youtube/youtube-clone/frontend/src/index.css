@@ -32,6 +32,8 @@ button {
 
 .app__content {
   flex: 1;
+  min-width: 0; /* prevent flex item from expanding beyond viewport due to wide content */
+  overflow-x: clip;
   margin-left: 240px;
   padding: 16px 0;
   min-height: calc(100vh - 56px);
