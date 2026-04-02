@@ -3,6 +3,29 @@ $ErrorActionPreference = "Stop"
 $backendRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $backendRoot
 
+# Keep heavy model cache in project drive by default (avoids C: low-space issues).
+$defaultHfCache = Join-Path $backendRoot ".hf-cache"
+if (-not (Test-Path $defaultHfCache)) {
+    New-Item -ItemType Directory -Path $defaultHfCache | Out-Null
+}
+
+if (-not $env:HF_HOME) {
+    $env:HF_HOME = $defaultHfCache
+}
+if (-not $env:HUGGINGFACE_HUB_CACHE) {
+    $env:HUGGINGFACE_HUB_CACHE = Join-Path $env:HF_HOME "hub"
+}
+if (-not $env:TRANSFORMERS_CACHE) {
+    $env:TRANSFORMERS_CACHE = Join-Path $env:HF_HOME "transformers"
+}
+if (-not $env:SENTENCE_TRANSFORMERS_HOME) {
+    $env:SENTENCE_TRANSFORMERS_HOME = Join-Path $env:HF_HOME "sentence_transformers"
+}
+
+Write-Host "Hugging Face cache root: $($env:HF_HOME)"
+
+#####################################################################################
+
 $venvPython = Join-Path $backendRoot ".venv\Scripts\python.exe"
 
 if (-not (Get-Command py -ErrorAction SilentlyContinue)) {
