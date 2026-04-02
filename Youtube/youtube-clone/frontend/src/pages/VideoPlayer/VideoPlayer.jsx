@@ -38,6 +38,8 @@ const VideoPlayer = () => {
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [expandedReplies, setExpandedReplies] = useState({});
+  const [commentDraft, setCommentDraft] = useState("");
+  const [isCommentInputActive, setIsCommentInputActive] = useState(false);
 
   // watchId: null = not started | 'pending' = INSERT in flight | uuid = INSERT done
   // watchVideoId: tracks which video the current watchId belongs to (guards fast navigation)
@@ -461,6 +463,24 @@ const VideoPlayer = () => {
     setExpandedReplies((prev) => ({ ...prev, [commentId]: !prev[commentId] }));
   };
 
+  const handleCommentFocus = () => {
+    setIsCommentInputActive(true);
+  };
+
+  const handleCommentCancel = () => {
+    setCommentDraft("");
+    setIsCommentInputActive(false);
+  };
+
+  const handleCommentSubmit = (event) => {
+    event.preventDefault();
+    if (!commentDraft.trim()) return;
+
+    // Sample comments are static in this screen, so we only reset the composer UI.
+    setCommentDraft("");
+    setIsCommentInputActive(false);
+  };
+
   const generateColorHash = (value) => {
     const str = value || "Channel";
     let hash = 0;
@@ -663,17 +683,40 @@ const VideoPlayer = () => {
             </button>
           </div>
 
-          <div className="comment-input">
+          <form className="comment-input" onSubmit={handleCommentSubmit}>
             <img
               className="comment-input__avatar"
               src="https://ui-avatars.com/api/?name=U&background=8B5CF6&color=fff&size=40"
               alt="Your avatar"
             />
-            <input
-              className="comment-input__field"
-              placeholder="Add a comment..."
-            />
-          </div>
+            <div className="comment-input__body">
+              <input
+                className="comment-input__field"
+                placeholder="Add a comment..."
+                value={commentDraft}
+                onChange={(event) => setCommentDraft(event.target.value)}
+                onFocus={handleCommentFocus}
+              />
+              {isCommentInputActive && (
+                <div className="comment-input__actions">
+                  <button
+                    type="button"
+                    className="comment-input__cancel"
+                    onClick={handleCommentCancel}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="comment-input__submit"
+                    disabled={!commentDraft.trim()}
+                  >
+                    Comment
+                  </button>
+                </div>
+              )}
+            </div>
+          </form>
 
           {comments.map((comment) => (
             <div key={comment.id}>

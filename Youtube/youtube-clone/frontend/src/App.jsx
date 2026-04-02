@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { HashRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
 import { features } from "./config";
-import { AuthProvider, useAuth } from "./context";
+import { AuthProvider, useAuth, ThemeProvider } from "./context";
 import { Navbar, Sidebar } from "./components";
 import { SignIn } from "./pages";
 
@@ -86,25 +86,27 @@ const App = () => {
   };
 
   return (
-    <AuthProvider>
-      <Router>
-        <Routes>
-          {/* Sign in page - standalone without navbar/sidebar */}
-          <Route path="/signin" element={<SignIn />} />
+    <ThemeProvider>
+      <AuthProvider>
+        <Router>
+          <Routes>
+            {/* Sign in page - standalone without navbar/sidebar */}
+            <Route path="/signin" element={<SignIn />} />
 
-          {/* All other routes with main layout */}
-          <Route
-            path="/*"
-            element={
-              <AppLayout
-                sidebarCollapsed={sidebarCollapsed}
-                toggleSidebar={toggleSidebar}
-              />
-            }
-          />
-        </Routes>
-      </Router>
-    </AuthProvider>
+            {/* All other routes with main layout */}
+            <Route
+              path="/*"
+              element={
+                <AppLayout
+                  sidebarCollapsed={sidebarCollapsed}
+                  toggleSidebar={toggleSidebar}
+                />
+              }
+            />
+          </Routes>
+        </Router>
+      </AuthProvider>
+    </ThemeProvider>
   );
 };
 

@@ -27,7 +27,7 @@
 .channel-page__banner-text {
   font-size: 48px;
   font-weight: 700;
-  color: #fff;
+  color: var(--text-primary);
   text-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   margin: 0;
   text-align: center;
@@ -63,7 +63,7 @@
 .channel-page__avatar-initials {
   font-size: 28px;
   font-weight: 700;
-  color: #fff;
+  color: var(--text-primary);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
 
@@ -74,23 +74,26 @@
 .channel-page__name {
   font-size: 24px;
   font-weight: 600;
-  color: #0f0f0f;
+  color: var(--text-primary);
   display: flex;
   align-items: center;
   gap: 8px;
   margin-bottom: 4px;
+  transition: color 0.3s;
 }
 
 .channel-page__handle {
   font-size: 14px;
-  color: #606060;
+  color: var(--text-secondary);
   margin-bottom: 4px;
+  transition: color 0.3s;
 }
 
 .channel-page__stats {
   font-size: 14px;
-  color: #606060;
+  color: var(--text-secondary);
   margin-bottom: 12px;
+  transition: color 0.3s;
 }
 
 .channel-page__stats span + span::before {
@@ -99,45 +102,49 @@
 
 .channel-page__description-text {
   font-size: 14px;
-  color: #606060;
+  color: var(--text-secondary);
   line-height: 20px;
   margin-bottom: 16px;
   max-width: 600px;
+  transition: color 0.3s;
 }
 
 .channel-page__subscribe-btn {
   padding: 10px 20px;
   border-radius: 20px;
   border: none;
-  background-color: #0f0f0f;
-  color: #fff;
+  background-color: var(--text-primary);
+  color: var(--bg-primary);
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   font-family: "Roboto", sans-serif;
+  transition: background-color 0.2s, color 0.2s;
 }
 
 .channel-page__subscribe-btn:hover {
-  background-color: #272727;
+  background-color: var(--text-secondary);
 }
 
 .channel-page__subscribe-btn--subscribed {
-  background-color: #f2f2f2;
-  color: #0f0f0f;
+  background-color: var(--hover-bg);
+  color: var(--text-primary);
 }
 
 .channel-page__subscribe-btn--subscribed:hover {
-  background-color: #e5e5e5;
+  background-color: var(--bg-tertiary);
 }
 
 /* Tab Navigation */
 .channel-page__tabs {
   display: flex;
-  border-bottom: 1px solid #e5e5e5;
+  border-bottom: 1px solid var(--border-color);
   margin-top: 8px;
   margin-bottom: 24px;
   gap: 0;
+  transition: border-color 0.3s;
 }
+
 
 .channel-page__tab {
   padding: 12px 32px;
@@ -145,20 +152,20 @@
   background: none;
   font-size: 14px;
   font-weight: 500;
-  color: #606060;
+  color: var(--text-secondary);
   cursor: pointer;
   border-bottom: 2px solid transparent;
   font-family: "Roboto", sans-serif;
-  transition: color 0.2s;
+  transition: color 0.2s, border-color 0.2s;
 }
 
 .channel-page__tab:hover {
-  color: #0f0f0f;
+  color: var(--text-primary);
 }
 
 .channel-page__tab--active {
-  color: #0f0f0f;
-  border-bottom-color: #0f0f0f;
+  color: var(--text-primary);
+  border-bottom-color: var(--text-primary);
 }
 
 /* Channel Videos Grid */
@@ -172,11 +179,11 @@
   grid-column: 1 / -1;
   text-align: center;
   padding: 48px 16px;
-  color: #606060;
+  color: var(--text-secondary);
 }
 
 .channel-page__empty-state h3 {
-  color: #0f0f0f;
+  color: var(--text-primary);
   margin-bottom: 8px;
 }
 
@@ -185,17 +192,18 @@
   margin-top: 12px;
   padding: 8px 14px;
   border-radius: 999px;
-  background: #0f0f0f;
-  color: #fff;
+  background: var(--text-primary);
+  color: var(--bg-primary);
   font-size: 13px;
   font-weight: 600;
+  transition: background-color 0.2s;
 }
 
 .channel-page__loading-more,
 .channel-page__end-state {
   text-align: center;
   padding: 24px 0 8px;
-  color: #606060;
+  color: var(--text-secondary);
 }
 
 @media (max-width: 768px) {

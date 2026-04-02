@@ -27,17 +27,17 @@
 }
 
 .category-pill__remove:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: rgba(0, 0, 0, 0.1);
 }
 
 .category-pill--confirm {
-  border: 1px solid #0f0f0f;
+  border: 1px solid var(--text-primary);
 }
 
 .home__active-filter {
   margin: 8px 0 16px;
   font-size: 13px;
-  color: #606060;
+  color: var(--text-secondary);
 }
 
 .home__filter-actions {
@@ -45,18 +45,20 @@
 }
 
 .home__reset-feed-btn {
-  border: 1px solid #0f0f0f;
-  background: #0f0f0f;
-  color: #fff;
+  border: 1px solid var(--text-primary);
+  background: var(--text-primary);
+  color: var(--bg-primary);
   border-radius: 999px;
   padding: 8px 14px;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s;
 }
 
 .home__reset-feed-btn:hover {
-  background: #272727;
+  background: var(--text-secondary);
+  border-color: var(--text-secondary);
 }
 
 .filter-trigger-btn {
@@ -70,24 +72,26 @@
   border: 1px solid #d8dce5;
   border-radius: 50%;
   background: #fff;
+  color: #0f0f0f;
   cursor: pointer;
   transition: all 0.18s ease;
 }
 
 .filter-trigger-btn:hover {
   border-color: #0f0f0f;
-  background: #f5f5f5;
+  background: #fff;
 }
 
 .filter-trigger-btn--open {
-  background: #0f0f0f;
+  background: #fff;
   border-color: #0f0f0f;
-  color: #fff;
+  color: #0f0f0f;
 }
 
 .filter-trigger-btn--active {
   border-color: #0f0f0f;
-  background: #f0f0f0;
+  background: #fff;
+  color: #0f0f0f;
 }
 
 .filter-trigger-btn__icon {
@@ -116,9 +120,9 @@
 .region-dropdown {
   position: fixed;
   z-index: 200;
-  border: 1px solid rgba(15, 15, 15, 0.08);
+  border: 1px solid var(--border-color);
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.96);
+  background: var(--bg-secondary);
   backdrop-filter: blur(12px);
   box-shadow:
     0 24px 56px rgba(15, 15, 15, 0.2),
@@ -145,7 +149,7 @@
 
 .region-dropdown__divider {
   height: 1px;
-  background: rgba(15, 15, 15, 0.08);
+  background: var(--border-color);
   margin: 12px 0;
 }
 
@@ -160,26 +164,26 @@
 .region-dropdown__search-input {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #dde1e9;
+  border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 7px 12px;
   font-size: 13px;
-  color: #0f0f0f;
+  color: var(--text-primary);
   outline: none;
-  background: #fafafa;
+  background: var(--bg-secondary);
   transition: border-color 0.15s ease;
 }
 
 .region-dropdown__search-input:focus {
-  border-color: #aeb5c2;
-  background: #fff;
+  border-color: var(--border-color);
+  background: var(--bg-tertiary);
 }
 
 .region-dropdown__no-results {
   grid-column: 1 / -1;
   margin: 0;
   font-size: 13px;
-  color: #606060;
+  color: var(--text-secondary);
   text-align: center;
   padding: 8px 0;
 }
@@ -200,12 +204,12 @@
   margin: 0;
   font-size: 14px;
   font-weight: 700;
-  color: #0f0f0f;
+  color: var(--text-primary);
 }
 
 .region-dropdown__header span {
   font-size: 12px;
-  color: #606060;
+  color: var(--text-secondary);
 }
 
 .region-dropdown__list {
@@ -216,26 +220,26 @@
 }
 
 .region-option {
-  border: 1px solid #dde1e9;
+  border: 1px solid var(--border-color);
   border-radius: 10px;
-  background: #fff;
+  background: var(--bg-tertiary);
   padding: 8px 10px;
   font-weight: 600;
   font-size: 13px;
-  color: #0f0f0f;
+  color: var(--text-primary);
   cursor: pointer;
   transition: all 0.18s ease;
 }
 
 .region-option:hover {
-  border-color: #aeb5c2;
+  border-color: var(--border-color);
   transform: translateY(-1px);
 }
 
 .region-option--selected {
-  background: #0f0f0f;
-  color: #fff;
-  border-color: #0f0f0f;
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  border-color: var(--text-primary);
   box-shadow: 0 8px 18px rgba(15, 15, 15, 0.24);
 }
 
@@ -248,7 +252,7 @@
 .region-dropdown__clear {
   border: none;
   background: transparent;
-  color: #606060;
+  color: var(--text-secondary);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
@@ -256,13 +260,13 @@
 }
 
 .region-dropdown__clear:hover {
-  color: #0f0f0f;
+  color: var(--text-primary);
 }
 
 .region-dropdown__confirm {
-  border: 1px solid #0f0f0f;
-  background: #0f0f0f;
-  color: #fff;
+  border: 1px solid var(--text-primary);
+  background: var(--text-primary);
+  color: var(--bg-primary);
   border-radius: 10px;
   padding: 8px 12px;
   font-size: 13px;

@@ -4,11 +4,11 @@
   left: 0;
   width: 240px;
   height: calc(100vh - 56px);
-  background-color: #fff;
+  background-color: var(--bg-primary);
   overflow-y: auto;
   z-index: 999;
   padding: 12px 0;
-  transition: transform 0.2s ease-in-out;
+  transition: transform 0.2s ease-in-out, background-color 0.3s;
 }
 
 .sidebar--collapsed {
@@ -40,8 +40,9 @@
   padding: 8px 12px;
   font-size: 14px;
   font-weight: 500;
-  color: #606060;
+  color: var(--text-secondary);
   text-transform: none;
+  transition: color 0.3s;
 }
 
 .sidebar__link {
@@ -51,18 +52,18 @@
   padding: 8px 12px;
   border-radius: 10px;
   text-decoration: none;
-  color: #0f0f0f;
+  color: var(--text-primary);
   font-size: 14px;
   cursor: pointer;
   transition: background-color 0.15s;
 }
 
 .sidebar__link:hover {
-  background-color: #f2f2f2;
+  background-color: var(--hover-bg);
 }
 
 .sidebar__link--active {
-  background-color: #f2f2f2;
+  background-color: var(--hover-bg);
   font-weight: 500;
 }
 
@@ -72,7 +73,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #030303;
+  color: var(--text-primary);
 }
 
 .sidebar__link-text {
@@ -83,8 +84,9 @@
 
 .sidebar__hr {
   border: none;
-  border-top: 1px solid #e5e5e5;
+  border-top: 1px solid var(--border-color);
   margin: 12px 16px;
+  transition: border-color 0.3s;
 }
 
 .sidebar::-webkit-scrollbar {
@@ -97,7 +99,7 @@
 }
 
 .sidebar:hover::-webkit-scrollbar-thumb {
-  background-color: #ccc;
+  background-color: var(--border-color);
 }
 
 /* Subscription channel avatar */

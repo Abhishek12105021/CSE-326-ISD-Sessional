@@ -8,7 +8,7 @@
   border-radius: 12px;
   overflow: hidden;
   aspect-ratio: 16 / 9;
-  background-color: #e5e5e5;
+  background-color: var(--bg-tertiary);
 }
 
 .video-card__thumbnail {
@@ -27,12 +27,12 @@
 .video-card__thumbnail-placeholder {
   width: 100%;
   height: 100%;
-  background: linear-gradient(135deg, #f0f0f0 0%, #e0e0e0 100%);
+  background: linear-gradient(135deg, var(--bg-tertiary) 0%, var(--bg-secondary) 100%);
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 14px;
-  color: #999;
+  color: var(--text-tertiary);
 }
 
 .video-card__thumbnail-placeholder-text {
@@ -96,7 +96,7 @@
 .video-card__avatar-initials {
   font-size: 14px;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--text-primary);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
   letter-spacing: 0.5px;
 }
@@ -110,7 +110,7 @@
   font-size: 14px;
   font-weight: 500;
   line-height: 20px;
-  color: #0f0f0f;
+  color: var(--text-primary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -120,24 +120,24 @@
 
 .video-card__channel {
   font-size: 12px;
-  color: #606060;
+  color: var(--text-secondary);
   display: flex;
   align-items: center;
   gap: 4px;
 }
 
 .video-card__channel:hover {
-  color: #0f0f0f;
+  color: var(--text-primary);
 }
 
 .video-card__verified {
   font-size: 14px;
-  color: #606060;
+  color: var(--text-secondary);
 }
 
 .video-card__meta {
   font-size: 12px;
-  color: #606060;
+  color: var(--text-secondary);
 }
 
 .video-card__meta span + span::before {
@@ -152,8 +152,9 @@
   overflow-x: auto;
   position: sticky;
   top: 56px;
-  background-color: #fff;
+  background-color: var(--bg-primary);
   z-index: 100;
+  transition: background-color 0.3s;
 }
 
 .category-bar::-webkit-scrollbar {
@@ -164,25 +165,25 @@
   padding: 6px 12px;
   border-radius: 8px;
   border: none;
-  background-color: #f2f2f2;
-  color: #0f0f0f;
+  background-color: var(--hover-bg);
+  color: var(--text-primary);
   font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
   font-family: 'Roboto', sans-serif;
-  transition: background-color 0.2s;
+  transition: background-color 0.2s, color 0.2s;
 }
 
 .category-pill:hover {
-  background-color: #e5e5e5;
+  background-color: var(--bg-tertiary);
 }
 
 .category-pill--active {
-  background-color: #0f0f0f;
-  color: #fff;
+  background-color: var(--text-primary);
+  color: var(--bg-primary);
 }
 
 .category-pill--active:hover {
-  background-color: #272727;
+  background-color: var(--text-secondary);
 }
