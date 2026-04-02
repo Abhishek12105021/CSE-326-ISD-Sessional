@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { VideoCard } from "../../components";
-import { AiOutlineDown } from "react-icons/ai";
+import { BsSliders } from "react-icons/bs";
 import { features } from "../../config";
 import { useAuth } from "../../context";
 import { apiService } from "../../services";
@@ -20,8 +20,8 @@ const HARDCODED_REGIONS = [
   "RU",
 ];
 
-const areSameSelections = (a, b) =>
-  a.length === b.length && a.every((item) => b.includes(item));
+const LIMIT = 30;
+
 
 const Home = () => {
   const { isAuthenticated, session, guestId, region, getWatchedVideoIds } =
@@ -29,36 +29,39 @@ const Home = () => {
 
   const [videos, setVideos] = useState([]);
   const [categories, setCategories] = useState(["All"]);
-  const [selectedCategories, setSelectedCategories] = useState([]);
+
+  // Top bar: instant single-category filter
+  const [activeQuickCategory, setActiveQuickCategory] = useState(null);
+
+  // Dropdown: temp selections (not applied until Apply is clicked)
+  const [dropdownCategories, setDropdownCategories] = useState([]);
+  const [dropdownRegions, setDropdownRegions] = useState([]);
+
+  // Applied filter state (drives API calls and UI indicators)
   const [appliedCategories, setAppliedCategories] = useState([]);
-  const [regions, setRegions] = useState([]);
-  const [selectedRegions, setSelectedRegions] = useState([]);
   const [appliedRegions, setAppliedRegions] = useState([]);
-  const [isRegionDropdownOpen, setIsRegionDropdownOpen] = useState(false);
-  const [regionDropdownPosition, setRegionDropdownPosition] = useState({
-    top: 0,
-    left: 0,
-  });
+
+  const [regions, setRegions] = useState([]);
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0 });
+  const [categorySearch, setCategorySearch] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   const shownIds = useRef(new Set());
-  const regionTriggerRef = useRef(null);
-  const regionDropdownRef = useRef(null);
-  const LIMIT = 30;
+  const dropdownTriggerRef = useRef(null);
+  const dropdownRef = useRef(null);
 
   const dbCategories = categories.filter((cat) => cat !== "All");
-  const allCategoriesSelected =
-    dbCategories.length > 0 &&
-    selectedCategories.length === dbCategories.length &&
-    dbCategories.every((cat) => selectedCategories.includes(cat));
+  const filteredDropdownCategories = categorySearch
+    ? dbCategories.filter((cat) =>
+        cat.toLowerCase().includes(categorySearch.toLowerCase()),
+      )
+    : dbCategories;
   const hasAppliedCategoryFilter = appliedCategories.length > 0;
   const hasAppliedRegionFilter = appliedRegions.length > 0;
-  const hasAnyAppliedFilter =
-    hasAppliedCategoryFilter || hasAppliedRegionFilter;
-  const hasPendingFilterChanges =
-    !areSameSelections(selectedCategories, appliedCategories) ||
-    !areSameSelections(selectedRegions, appliedRegions);
+  const hasAnyAppliedFilter = hasAppliedCategoryFilter || hasAppliedRegionFilter;
+  const totalAppliedCount = appliedCategories.length + appliedRegions.length;
 
   // Fetch categories once on mount
   useEffect(() => {
@@ -71,15 +74,12 @@ const Home = () => {
         );
         setCategories(["All", ...uniqueDbCategories]);
       })
-      .catch(() => {}); // silently keep default "All" on failure
+      .catch(() => {});
   }, []);
 
   // Fetch regions once on mount (frontend hardcoded source)
   useEffect(() => {
-    const fetchRegions = async () => {
-      setRegions(HARDCODED_REGIONS);
-    };
-    fetchRegions();
+    setRegions(HARDCODED_REGIONS);
   }, []);
 
   // Fetch initial feed when auth state or region changes
@@ -104,43 +104,45 @@ const Home = () => {
       fetched.forEach((v) => shownIds.current.add(v.id));
       setVideos(fetched);
       setHasMore(fetched.length > 0);
+      setActiveQuickCategory(null);
       setAppliedCategories([]);
-      setSelectedCategories([]);
       setAppliedRegions([]);
-      setSelectedRegions([]);
+      setDropdownCategories([]);
+      setDropdownRegions([]);
     } catch (err) {
       console.error("[Home] Failed to fetch feed:", err);
     } finally {
       setLoading(false);
     }
-  }, [isAuthenticated, session, guestId, region, getWatchedVideoIds, LIMIT]);
+  }, [isAuthenticated, session, guestId, region, getWatchedVideoIds]);
 
   useEffect(() => {
     fetchFeed();
   }, [fetchFeed]);
 
-  const updateRegionDropdownPosition = useCallback(() => {
-    const trigger = regionTriggerRef.current;
+  // Dropdown position tracking
+  const updateDropdownPosition = useCallback(() => {
+    const trigger = dropdownTriggerRef.current;
     if (!trigger) return;
 
     const rect = trigger.getBoundingClientRect();
-    const estimatedWidth = 420;
+    const estimatedWidth = 560;
     const viewportPadding = 12;
     const maxLeft = window.innerWidth - estimatedWidth - viewportPadding;
     const safeLeft = Math.max(viewportPadding, Math.min(rect.left, maxLeft));
 
-    setRegionDropdownPosition({
+    setDropdownPosition({
       top: rect.bottom + 10,
       left: safeLeft,
     });
   }, []);
 
   useEffect(() => {
-    if (!isRegionDropdownOpen) return;
+    if (!isDropdownOpen) return;
 
-    updateRegionDropdownPosition();
+    updateDropdownPosition();
 
-    const handleViewportChange = () => updateRegionDropdownPosition();
+    const handleViewportChange = () => updateDropdownPosition();
     window.addEventListener("resize", handleViewportChange);
     window.addEventListener("scroll", handleViewportChange, true);
 
@@ -148,53 +150,98 @@ const Home = () => {
       window.removeEventListener("resize", handleViewportChange);
       window.removeEventListener("scroll", handleViewportChange, true);
     };
-  }, [isRegionDropdownOpen, updateRegionDropdownPosition]);
+  }, [isDropdownOpen, updateDropdownPosition]);
+
+  // Clear category search when dropdown closes
+  useEffect(() => {
+    if (!isDropdownOpen) setCategorySearch("");
+  }, [isDropdownOpen]);
 
   useEffect(() => {
-    if (!isRegionDropdownOpen) return;
+    if (!isDropdownOpen) return;
 
     const handleOutsideClick = (event) => {
       const target = event.target;
       if (
-        regionDropdownRef.current?.contains(target) ||
-        regionTriggerRef.current?.contains(target)
+        dropdownRef.current?.contains(target) ||
+        dropdownTriggerRef.current?.contains(target)
       ) {
         return;
       }
-      setIsRegionDropdownOpen(false);
+      setIsDropdownOpen(false);
     };
 
     document.addEventListener("mousedown", handleOutsideClick);
     return () => document.removeEventListener("mousedown", handleOutsideClick);
-  }, [isRegionDropdownOpen]);
+  }, [isDropdownOpen]);
 
-  const toggleCategorySelection = useCallback(
+  // Quick single-category click — instant filter
+  const handleQuickCategoryClick = useCallback(
+    async (category) => {
+      setIsDropdownOpen(false);
+
+      if (category === "All" || activeQuickCategory === category) {
+        // Reset to default feed
+        setActiveQuickCategory(null);
+        setAppliedCategories([]);
+        setAppliedRegions([]);
+        setDropdownCategories([]);
+        setDropdownRegions([]);
+        await fetchFeed();
+        return;
+      }
+
+      setActiveQuickCategory(category);
+      setAppliedCategories([category]);
+      setAppliedRegions([]);
+      setDropdownCategories([]);
+      setDropdownRegions([]);
+      setLoading(true);
+      shownIds.current = new Set();
+
+      try {
+        const data = await apiService.post(API_ENDPOINTS.FILTER_HOMEFEED, {
+          categories: [category],
+          regions: [],
+          excluded_video_ids: [],
+          limit: LIMIT,
+        });
+        const fetched = data?.videos || [];
+        fetched.forEach((v) => shownIds.current.add(v.id));
+        setVideos(fetched);
+        setHasMore(fetched.length > 0);
+      } catch (err) {
+        console.error("[Home] Failed to apply quick category filter:", err);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [activeQuickCategory, fetchFeed],
+  );
+
+  // Dropdown: multi-category toggle
+  const toggleDropdownCategory = useCallback(
     (category) => {
-      setSelectedCategories((prev) => {
+      setDropdownCategories((prev) => {
         if (category === "All") {
-          const isAllSelected =
+          const allSelected =
             dbCategories.length > 0 &&
             prev.length === dbCategories.length &&
             dbCategories.every((cat) => prev.includes(cat));
-          return isAllSelected ? [] : dbCategories;
+          return allSelected ? [] : [...dbCategories];
         }
-
         if (prev.includes(category)) {
           return prev.filter((cat) => cat !== category);
         }
-
         return [...prev, category];
       });
     },
     [dbCategories],
   );
 
-  const removeCategorySelection = useCallback((category) => {
-    setSelectedCategories((prev) => prev.filter((cat) => cat !== category));
-  }, []);
-
-  const toggleRegionSelection = useCallback((regionCode) => {
-    setSelectedRegions((prev) => {
+  // Dropdown: region toggle
+  const toggleDropdownRegion = useCallback((regionCode) => {
+    setDropdownRegions((prev) => {
       if (prev.includes(regionCode)) {
         return prev.filter((r) => r !== regionCode);
       }
@@ -202,46 +249,45 @@ const Home = () => {
     });
   }, []);
 
-  const applyFilters = useCallback(async () => {
-    const normalizedCategories = [...selectedCategories];
-    const normalizedRegions = [...selectedRegions];
+  // Dropdown: apply button
+  const applyDropdownFilters = useCallback(async () => {
+    const cats = [...dropdownCategories];
+    const regs = [...dropdownRegions];
 
-    if (normalizedCategories.length === 0 && normalizedRegions.length === 0) {
-      setIsRegionDropdownOpen(false);
+    setIsDropdownOpen(false);
+
+    if (cats.length === 0 && regs.length === 0) {
+      setActiveQuickCategory(null);
       await fetchFeed();
       return;
     }
 
+    setActiveQuickCategory(null);
     setLoading(true);
     shownIds.current = new Set();
 
     try {
       const data = await apiService.post(API_ENDPOINTS.FILTER_HOMEFEED, {
-        categories: normalizedCategories,
-        regions: normalizedRegions,
+        categories: cats,
+        regions: regs,
         excluded_video_ids: [],
         limit: LIMIT,
       });
-
       const fetched = data?.videos || [];
       fetched.forEach((v) => shownIds.current.add(v.id));
-
       setVideos(fetched);
-      setAppliedCategories(normalizedCategories);
-      setSelectedCategories(normalizedCategories);
-      setAppliedRegions(normalizedRegions);
-      setSelectedRegions(normalizedRegions);
-      setIsRegionDropdownOpen(false);
+      setAppliedCategories(cats);
+      setAppliedRegions(regs);
       setHasMore(fetched.length > 0);
     } catch (err) {
-      console.error("[Home] Failed to apply unified filters:", err);
+      console.error("[Home] Failed to apply dropdown filters:", err);
     } finally {
       setLoading(false);
     }
-  }, [selectedCategories, selectedRegions, fetchFeed, LIMIT]);
+  }, [dropdownCategories, dropdownRegions, fetchFeed]);
 
   const loadPersonalizedFeed = useCallback(async () => {
-    setIsRegionDropdownOpen(false);
+    setIsDropdownOpen(false);
     await fetchFeed();
   }, [fetchFeed]);
 
@@ -301,7 +347,6 @@ const Home = () => {
     guestId,
     region,
     getWatchedVideoIds,
-    LIMIT,
   ]);
 
   // Scroll listener for infinite scroll
@@ -329,93 +374,143 @@ const Home = () => {
 
   return (
     <div className="home">
-      {/* Category Pills */}
+      {/* Category Bar */}
       {features.categoryChips && (
         <>
           <div className="category-bar">
+            {/* Advanced Filters dropdown trigger — icon only */}
             <button
-              ref={regionTriggerRef}
-              className={`category-pill region-dropdown-trigger ${isRegionDropdownOpen ? "region-dropdown-trigger--open" : ""}`}
-              onClick={() => setIsRegionDropdownOpen((prev) => !prev)}
+              ref={dropdownTriggerRef}
+              className={`filter-trigger-btn ${isDropdownOpen ? "filter-trigger-btn--open" : ""} ${hasAnyAppliedFilter && !activeQuickCategory ? "filter-trigger-btn--active" : ""}`}
+              onClick={() => setIsDropdownOpen((prev) => !prev)}
+              title="Advanced Filters"
             >
-              <span>Regions ({selectedRegions.length})</span>
-              <AiOutlineDown className="region-dropdown-trigger__icon" />
+              <BsSliders className="filter-trigger-btn__icon" />
+              {hasAnyAppliedFilter && !activeQuickCategory && (
+                <span className="filter-trigger-btn__badge">
+                  {totalAppliedCount}
+                </span>
+              )}
             </button>
 
+            {/* Quick single-category pills */}
             {categories.map((cat) => (
               <button
                 key={cat}
                 className={`category-pill ${
                   cat === "All"
-                    ? allCategoriesSelected
+                    ? !activeQuickCategory && !hasAnyAppliedFilter
                       ? "category-pill--active"
                       : ""
-                    : selectedCategories.includes(cat)
+                    : activeQuickCategory === cat
                       ? "category-pill--active"
                       : ""
                 }`}
-                onClick={() => toggleCategorySelection(cat)}
+                onClick={() => handleQuickCategoryClick(cat)}
               >
                 <span className="category-pill__label">{cat}</span>
-                {cat !== "All" && selectedCategories.includes(cat) && (
-                  <span
-                    className="category-pill__remove"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeCategorySelection(cat);
-                    }}
-                    aria-label={`Remove ${cat}`}
-                  >
-                    ×
-                  </span>
-                )}
               </button>
             ))}
-
-            {hasPendingFilterChanges && (
-              <button
-                className="category-pill category-pill--active category-pill--confirm"
-                onClick={applyFilters}
-              >
-                Apply Filters
-              </button>
-            )}
           </div>
 
-          {isRegionDropdownOpen && (
+          {/* Advanced Filters Dropdown Panel */}
+          {isDropdownOpen && (
             <div
-              ref={regionDropdownRef}
+              ref={dropdownRef}
               className="region-dropdown"
               style={{
-                top: `${regionDropdownPosition.top}px`,
-                left: `${regionDropdownPosition.left}px`,
+                top: `${dropdownPosition.top}px`,
+                left: `${dropdownPosition.left}px`,
               }}
             >
-              <div className="region-dropdown__header">
-                <h4>Filter By Region</h4>
-                <span>{selectedRegions.length} selected</span>
+              {/* Categories Section */}
+              <div className="region-dropdown__section">
+                <div className="region-dropdown__header">
+                  <h4>Filter by Categories</h4>
+                  {dropdownCategories.length > 0 && (
+                    <span>{dropdownCategories.length} selected</span>
+                  )}
+                </div>
+                <div className="region-dropdown__search">
+                  <input
+                    type="text"
+                    placeholder="Search categories…"
+                    value={categorySearch}
+                    onChange={(e) => setCategorySearch(e.target.value)}
+                    className="region-dropdown__search-input"
+                  />
+                </div>
+                <div className="region-dropdown__list region-dropdown__categories">
+                  {filteredDropdownCategories.length > 0 ? (
+                    filteredDropdownCategories.map((cat) => {
+                      const isSelected = dropdownCategories.includes(cat);
+                      return (
+                        <button
+                          key={cat}
+                          type="button"
+                          className={`region-option ${isSelected ? "region-option--selected" : ""}`}
+                          onClick={() => toggleDropdownCategory(cat)}
+                        >
+                          {isSelected && (
+                            <span className="region-option__check">✓</span>
+                          )}
+                          {cat}
+                        </button>
+                      );
+                    })
+                  ) : (
+                    <p className="region-dropdown__no-results">No match</p>
+                  )}
+                </div>
               </div>
 
-              <div className="region-dropdown__list">
-                {regions.map((regionCode) => (
-                  <button
-                    key={regionCode}
-                    type="button"
-                    className={`region-option ${selectedRegions.includes(regionCode) ? "region-option--selected" : ""}`}
-                    onClick={() => toggleRegionSelection(regionCode)}
-                  >
-                    {regionCode}
-                  </button>
-                ))}
+              <div className="region-dropdown__divider" />
+
+              {/* Regions Section */}
+              <div className="region-dropdown__section">
+                <div className="region-dropdown__header">
+                  <h4>Filter by Regions</h4>
+                  {dropdownRegions.length > 0 && (
+                    <span>{dropdownRegions.length} selected</span>
+                  )}
+                </div>
+                <div className="region-dropdown__list">
+                  {regions.map((regionCode) => {
+                    const isSelected = dropdownRegions.includes(regionCode);
+                    return (
+                      <button
+                        key={regionCode}
+                        type="button"
+                        className={`region-option ${isSelected ? "region-option--selected" : ""}`}
+                        onClick={() => toggleDropdownRegion(regionCode)}
+                      >
+                        {isSelected && (
+                          <span className="region-option__check">✓</span>
+                        )}
+                        {regionCode}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               <div className="region-dropdown__actions">
                 <button
                   type="button"
                   className="region-dropdown__clear"
-                  onClick={() => setSelectedRegions([])}
+                  onClick={() => {
+                    setDropdownCategories([]);
+                    setDropdownRegions([]);
+                  }}
                 >
-                  Clear
+                  Clear All
+                </button>
+                <button
+                  type="button"
+                  className="region-dropdown__confirm"
+                  onClick={applyDropdownFilters}
+                >
+                  Apply Filters
                 </button>
               </div>
             </div>
