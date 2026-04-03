@@ -1,11 +1,11 @@
 """
 FAISS-based in-memory embedding manager for fast recommendation serving.
 
-This module loads all video embeddings into RAM at server boot and provides
+This module loads a sampled subset of video embeddings into RAM at server boot and provides
 fast similarity search using Facebook's FAISS library instead of pgvector.
 
 Performance improvement: 15-20s → 300-500ms per feed request
-Memory footprint: ~100-150MB for 24K videos
+Memory footprint: ~20-30MB for a 5K sampled index
 
 Key Components:
 - FAISS_INDEX: IndexFlatIP for inner product similarity search (cosine after normalization)
@@ -41,31 +41,31 @@ USER_TASTE_VECTORS: dict[str, np.ndarray] = {}
 
 async def initialize_faiss():
     """
-    Load all video embeddings from Supabase into RAM and build FAISS index.
+    Load sampled video embeddings from Supabase into RAM and build FAISS index.
 
     Called ONCE at server boot via main.py lifespan event.
 
     Steps:
-    1. Fetch all video embeddings, country_code, velocity_score from database
+    1. Fetch a randomized subset of video embeddings, country_code, velocity_score
     2. Normalize embeddings for cosine similarity (FAISS uses inner product)
     3. Build FAISS IndexFlatIP index (exact search, no approximation)
     4. Populate UUID → embedding and UUID → metadata dictionaries
 
-    Memory footprint: ~100-150MB for 24K videos × 1024 dims
-    Boot time: Expected 3-5 seconds depending on network latency
+    Memory footprint: ~20-30MB for 5K videos × 1024 dims
+    Boot time: Expected 1-3 seconds depending on network latency
     """
     global FAISS_INDEX, UUID_TO_EMBEDDING, UUID_TO_META, INDEX_TO_UUID
 
     from app.db import get_video_embeddings_for_boot
     import json
 
-    print("[FAISS] Loading embeddings from database...")
-    videos = await get_video_embeddings_for_boot(limit=50000)
+    print("[FAISS] Loading sampled embeddings from database...")
+    videos = await get_video_embeddings_for_boot(limit=5000)
 
     if not videos:
         raise RuntimeError("No videos found for FAISS initialization")
 
-    print(f"[FAISS] Fetched {len(videos)} videos, building index...")
+    print(f"[FAISS] Fetched {len(videos)} sampled videos, building index...")
 
     # Build FAISS index incrementally to reduce peak RAM during boot.
     faiss_index: Optional[faiss.IndexFlatIP] = None

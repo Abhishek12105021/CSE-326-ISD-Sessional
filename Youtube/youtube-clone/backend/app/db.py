@@ -251,16 +251,19 @@ async def get_videos_by_uuids(uuids: list[str]) -> list[dict]:
         return rows
 
 
-async def get_video_embeddings_for_boot(limit: int = 50000) -> list[dict]:
+async def get_video_embeddings_for_boot(limit: int = 5000) -> list[dict]:
     """
-    Fetch all video embeddings, country codes, and velocity scores for FAISS initialization.
+    Fetch a randomized subset of video embeddings for FAISS initialization.
 
     Called ONCE at server boot to populate in-memory FAISS index.
+    For faster startup, this loads a random contiguous slice instead of all rows.
 
     SQL equivalent:
     SELECT id, embedding, country_code, velocity_score
     FROM videos
     WHERE embedding IS NOT NULL
+    ORDER BY id ASC
+    OFFSET random_start
     LIMIT {limit}
 
     Returns:
@@ -269,17 +272,60 @@ async def get_video_embeddings_for_boot(limit: int = 50000) -> list[dict]:
     Note: This is the only time embeddings are fetched during the entire server lifetime.
     All subsequent requests use the in-memory FAISS index.
     """
+    import json
+    import random
+
+    def _parse_total_count(content_range: str | None) -> int:
+        if not content_range or "/" not in content_range:
+            return -1
+        total_str = content_range.split("/", 1)[1]
+        if not total_str.isdigit():
+            return -1
+        return int(total_str)
+
     all_rows: list[dict] = []
-    batch_size = 1000
-    min_batch_size = 200
-    max_retries = 3
-    start = 0
+    batch_size = 500
+    min_batch_size = 100
+    max_retries = 5
 
     # Supabase/PostgREST often enforces max rows per response. Page explicitly
-    # with Range headers and stable ordering so boot can load all embeddings.
+    # with Range headers and stable ordering.
     async with httpx.AsyncClient(timeout=180.0) as client:
-        while len(all_rows) < limit:
-            remaining = limit - len(all_rows)
+        # First request asks PostgREST for exact filtered row count via Content-Range.
+        count_response = await client.get(
+            f"{REST_URL}/videos",
+            headers={
+                **HEADERS,
+                "Prefer": "count=exact",
+                "Range-Unit": "items",
+                "Range": "0-0",
+            },
+            params={
+                "select": "id",
+                "embedding": "not.is.null",
+                "order": "id.asc",
+            },
+        )
+        count_response.raise_for_status()
+
+        total_count = _parse_total_count(count_response.headers.get("Content-Range"))
+        if total_count < 0:
+            # Fallback if Content-Range is unavailable.
+            total_count = len(count_response.json())
+
+        if total_count <= 0:
+            return []
+
+        target_count = min(limit, total_count)
+        max_start = max(total_count - target_count, 0)
+        start = random.randint(0, max_start) if max_start > 0 else 0
+
+        print(
+            f"[DB] Sampling {target_count}/{total_count} embeddings from random offset {start} for FAISS boot"
+        )
+
+        while len(all_rows) < target_count:
+            remaining = target_count - len(all_rows)
             page_size = min(batch_size, remaining)
             rows: list[dict] | None = None
 
@@ -291,6 +337,7 @@ async def get_video_embeddings_for_boot(limit: int = 50000) -> list[dict]:
                         **HEADERS,
                         "Range-Unit": "items",
                         "Range": f"{start}-{end}",
+                        "Accept-Encoding": "identity",
                     },
                     params={
                         "select": "id,embedding,country_code,velocity_score",
@@ -300,8 +347,25 @@ async def get_video_embeddings_for_boot(limit: int = 50000) -> list[dict]:
                 )
 
                 if response.status_code < 400:
-                    rows = response.json()
-                    break
+                    try:
+                        rows = response.json()
+                        break
+                    except json.JSONDecodeError as e:
+                        # Some large pages can occasionally arrive as truncated JSON.
+                        # Retry with smaller pages to reduce payload size.
+                        if attempt < max_retries:
+                            page_size = max(min_batch_size, page_size // 2)
+                            print(
+                                f"[DB WARNING] Invalid JSON while fetching range {start}-{end}: {e}. "
+                                f"Retry {attempt}/{max_retries - 1} with page_size={page_size}."
+                            )
+                            continue
+
+                        body_preview = response.text[:300].replace("\n", " ")
+                        raise RuntimeError(
+                            "Failed to decode Supabase JSON for FAISS boot: "
+                            f"range={start}-{end}, body={body_preview}"
+                        ) from e
 
                 body_preview = response.text[:300].replace("\n", " ")
 
@@ -333,7 +397,7 @@ async def get_video_embeddings_for_boot(limit: int = 50000) -> list[dict]:
             if len(rows) < page_size:
                 break
 
-    print(f"[DB] Fetched {len(all_rows)} total videos for FAISS boot")
+    print(f"[DB] Fetched {len(all_rows)} sampled videos for FAISS boot")
     return all_rows
 
 
