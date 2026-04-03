@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { MdVerified } from "react-icons/md";
 import { VideoCard } from "../../components";
@@ -86,7 +86,7 @@ const Channel = () => {
             </div>
           ) : (
             <div style={{ textAlign: "center", padding: "48px", color: "#606060" }}>
-              <h3>This channel doesn't have any videos yet</h3>
+              <h3>This channel doesn&apos;t have any videos yet</h3>
             </div>
           )}
         </>

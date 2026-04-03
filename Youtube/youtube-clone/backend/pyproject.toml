@@ -1,0 +1,30 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning"
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["tests/*", "app/__init__.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError"
+]

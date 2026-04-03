@@ -75,7 +75,9 @@ class ApiService {
       try {
         const errBody = await response.json();
         errorDetail = errBody.detail || errorDetail;
-      } catch (_) {}
+      } catch {
+        // Ignore JSON parse errors for non-JSON error responses
+      }
       throw new Error(`API ${response.status}: ${errorDetail}`);
     }
 

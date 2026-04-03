@@ -1,4 +1,3 @@
-import React from "react";
 import { Link } from "react-router-dom";
 import { MdVerified } from "react-icons/md";
 import "./VideoCard.css";

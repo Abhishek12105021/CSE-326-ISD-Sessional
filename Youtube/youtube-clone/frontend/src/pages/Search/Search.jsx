@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { MdVerified, MdOutlineTune } from "react-icons/md";
 import { apiService } from "../../services";
@@ -139,7 +139,7 @@ const Search = () => {
         </>
       ) : query.trim() ? (
         <div className="search-page__no-results">
-          <h3>No results found for "{query}"</h3>
+          <h3>No results found for &quot;{query}&quot;</h3>
           <p>Try different keywords or check the spelling</p>
         </div>
       ) : null}

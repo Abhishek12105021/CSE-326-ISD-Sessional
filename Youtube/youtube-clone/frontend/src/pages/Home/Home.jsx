@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { VideoCard } from "../../components";
 import { AiOutlineDown } from "react-icons/ai";
 import { features } from "../../config";
@@ -477,7 +477,7 @@ const Home = () => {
 
       {!hasMore && videos.length > 0 && (
         <div style={{ textAlign: "center", padding: "24px", color: "#606060" }}>
-          <p>You've reached the end</p>
+          <p>You&apos;ve reached the end</p>
         </div>
       )}
     </div>

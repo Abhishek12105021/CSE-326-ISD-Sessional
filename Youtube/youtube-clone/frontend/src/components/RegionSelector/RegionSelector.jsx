@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import { useState, useRef } from 'react';
 import { MdPublic } from 'react-icons/md';
 import { useClickOutside } from '../../hooks';
 import './RegionSelector.css';

@@ -281,6 +281,8 @@ const VideoPlayer = () => {
         setIsSubscribed(channels.includes(video.channel?.name));
       })
       .catch(() => {});
+    // authClient is derived from isAuthenticated + session, so those deps are sufficient
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [video, isAuthenticated, session]);
 
   // Initialize like/dislike state from server for authenticated users

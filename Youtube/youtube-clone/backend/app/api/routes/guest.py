@@ -1,32 +1,23 @@
-from fastapi import APIRouter, Query
-from datetime import datetime
 import time
-from app.schemas.auth import (
-    GuestSessionRequest,
-    GuestSessionResponse,
-    MessageResponse
-)
+from datetime import datetime
+
+import numpy as np
+from fastapi import APIRouter
+
+from app.core import faiss_manager
+from app.core.recommendation import generate_phase1_feed, generate_phase2_feed, generate_phase3_feed
+from app.db import get_videos_metadata_by_uuids, increment_video_views, insert_watch_history, update_watch_history
+from app.schemas.auth import GuestSessionRequest, GuestSessionResponse
 from app.schemas.feed import (
+    ChannelInfo,
+    FeedResponse,
     GuestFeedRequest,
     GuestReloadFeedRequest,
-    FeedResponse,
     VideoResponse,
-    ChannelInfo,
     WatchEventRequest,
     WatchEventResponse,
-    CategoriesResponse
 )
-from app.core.recommendation import (
-    generate_phase1_feed,
-    generate_phase2_feed,
-    generate_phase3_feed
-)
-from app.core import faiss_manager
-from app.db import insert_watch_history, update_watch_history, get_unique_categories, increment_video_views, get_videos_metadata_by_uuids
-from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
-import numpy as np
-
-
+from app.utils.formatters import format_timestamp, format_views, generate_channel_avatar, is_verified
 
 # /api/guest/*
 # NOTE: Guest sessions are now managed via localStorage on the frontend.
@@ -258,19 +249,19 @@ async def get_guest_feed(request: GuestFeedRequest):
     step_start = time.time()
     if interaction_count == 0:
         strategy = "phase_1_cold_start"
-        print(f"[GUEST FEED Step 2/3] Phase 1 (Cold Start): Generating trending feed...")
+        print("[GUEST FEED Step 2/3] Phase 1 (Cold Start): Generating trending feed...")
         video_uuids = await generate_phase1_feed(request.region, watched_uuids, request.limit)
 
     elif 1 <= interaction_count <= 4:
         strategy = "phase_2_warm_up"
-        print(f"[GUEST FEED Step 2/3] Phase 2 (Warm-Up): Generating mixed feed...")
+        print("[GUEST FEED Step 2/3] Phase 2 (Warm-Up): Generating mixed feed...")
         video_uuids = await generate_phase2_feed(
             taste, request.region, watched_uuids, interaction_count, request.limit
         ) if taste is not None else await generate_phase1_feed(request.region, watched_uuids, request.limit)
 
     else:
         strategy = "phase_3_personalized"
-        print(f"[GUEST FEED Step 2/3] Phase 3 (Personalized): Generating semantic feed...")
+        print("[GUEST FEED Step 2/3] Phase 3 (Personalized): Generating semantic feed...")
         video_uuids = await generate_phase3_feed(
             taste, request.region, watched_uuids, interaction_count, request.limit
         ) if taste is not None else await generate_phase1_feed(request.region, watched_uuids, request.limit)
@@ -505,19 +496,19 @@ async def reload_guest_feed(request: GuestReloadFeedRequest):
     step_start = time.time()
     if interaction_count == 0:
         strategy = "phase_1_cold_start"
-        print(f"[GUEST RELOAD Step 2/3] Phase 1 (Cold Start): Generating trending feed...")
+        print("[GUEST RELOAD Step 2/3] Phase 1 (Cold Start): Generating trending feed...")
         video_uuids = await generate_phase1_feed(request.region, all_excluded, request.limit)
 
     elif 1 <= interaction_count <= 4:
         strategy = "phase_2_warm_up"
-        print(f"[GUEST RELOAD Step 2/3] Phase 2 (Warm-Up): Generating mixed feed...")
+        print("[GUEST RELOAD Step 2/3] Phase 2 (Warm-Up): Generating mixed feed...")
         video_uuids = await generate_phase2_feed(
             taste, request.region, all_excluded, interaction_count, request.limit
         ) if taste is not None else await generate_phase1_feed(request.region, all_excluded, request.limit)
 
     else:
         strategy = "phase_3_personalized"
-        print(f"[GUEST RELOAD Step 2/3] Phase 3 (Personalized): Generating semantic feed...")
+        print("[GUEST RELOAD Step 2/3] Phase 3 (Personalized): Generating semantic feed...")
         video_uuids = await generate_phase3_feed(
             taste, request.region, all_excluded, interaction_count, request.limit
         ) if taste is not None else await generate_phase1_feed(request.region, all_excluded, request.limit)
