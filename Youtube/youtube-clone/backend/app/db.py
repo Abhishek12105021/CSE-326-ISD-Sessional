@@ -256,27 +256,72 @@ async def get_video_embeddings_for_boot(limit: int = 50000) -> list[dict]:
     Note: This is the only time embeddings are fetched during the entire server lifetime.
     All subsequent requests use the in-memory FAISS index.
     """
-    import json
+    all_rows: list[dict] = []
+    batch_size = 1000
+    min_batch_size = 200
+    max_retries = 3
+    start = 0
 
-    async with httpx.AsyncClient(timeout=120.0) as client:  # Longer timeout for large fetch
-        response = await client.get(
-            f"{REST_URL}/videos",
-            headers=HEADERS,
-            params={
-                "select": "id,embedding,country_code,velocity_score",
-                "embedding": "not.is.null",  # Only videos with embeddings
-                "limit": limit
-            }
-        )
-        response.raise_for_status()
-        rows = response.json()
+    # Supabase/PostgREST often enforces max rows per response. Page explicitly
+    # with Range headers and stable ordering so boot can load all embeddings.
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        while len(all_rows) < limit:
+            remaining = limit - len(all_rows)
+            page_size = min(batch_size, remaining)
+            rows: list[dict] | None = None
 
-        # Parse embedding if it's a string (REST API serializes as JSON string)
-        for row in rows:
-            if row.get("embedding") and isinstance(row["embedding"], str):
-                row["embedding"] = json.loads(row["embedding"])
+            for attempt in range(1, max_retries + 1):
+                end = start + page_size - 1
+                response = await client.get(
+                    f"{REST_URL}/videos",
+                    headers={
+                        **HEADERS,
+                        "Range-Unit": "items",
+                        "Range": f"{start}-{end}",
+                    },
+                    params={
+                        "select": "id,embedding,country_code,velocity_score",
+                        "embedding": "not.is.null",
+                        "order": "id.asc",
+                    }
+                )
 
-        return rows
+                if response.status_code < 400:
+                    rows = response.json()
+                    break
+
+                body_preview = response.text[:300].replace("\n", " ")
+
+                # Retry transient upstream errors, reducing batch size to lower payload pressure.
+                if response.status_code >= 500 and attempt < max_retries:
+                    page_size = max(min_batch_size, page_size // 2)
+                    print(
+                        f"[DB WARNING] Supabase {response.status_code} while fetching range {start}-{end}. "
+                        f"Retry {attempt}/{max_retries - 1} with page_size={page_size}."
+                    )
+                    continue
+
+                raise RuntimeError(
+                    "Failed to fetch video embeddings for FAISS boot: "
+                    f"status={response.status_code}, range={start}-{end}, body={body_preview}"
+                )
+
+            if rows is None:
+                raise RuntimeError(
+                    f"Failed to fetch video embeddings for FAISS boot after {max_retries} retries at start={start}."
+                )
+
+            if not rows:
+                break
+
+            all_rows.extend(rows)
+            start += len(rows)
+
+            if len(rows) < page_size:
+                break
+
+    print(f"[DB] Fetched {len(all_rows)} total videos for FAISS boot")
+    return all_rows
 
 
 async def get_videos_metadata_by_uuids(uuids: list[str]) -> list[dict]:

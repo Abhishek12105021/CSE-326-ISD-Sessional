@@ -13,7 +13,6 @@ Key:
 import os
 import numpy as np
 from pathlib import Path
-import torch
 
 # ==================== GLOBAL MODEL ====================
 
@@ -111,6 +110,7 @@ def _load_sentence_transformer_fallback() -> None:
     global MODEL, MODEL_BACKEND
 
     try:
+        import torch
         from sentence_transformers import SentenceTransformer
         from torch.quantization import quantize_dynamic
         from torch.nn import Linear

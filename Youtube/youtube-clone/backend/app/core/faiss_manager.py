@@ -67,8 +67,11 @@ async def initialize_faiss():
 
     print(f"[FAISS] Fetched {len(videos)} videos, building index...")
 
-    # Build embedding matrix for FAISS
-    embeddings = []
+    # Build FAISS index incrementally to reduce peak RAM during boot.
+    faiss_index: Optional[faiss.IndexFlatIP] = None
+    pending_embeddings: list[np.ndarray] = []
+    pending_batch_size = 1024
+    dimension: Optional[int] = None
     valid_count = 0
 
     for video in videos:
@@ -98,7 +101,15 @@ async def initialize_faiss():
 
             embedding = embedding / norm
 
-            embeddings.append(embedding)
+            if faiss_index is None:
+                dimension = embedding.shape[0]
+                faiss_index = faiss.IndexFlatIP(dimension)
+
+            pending_embeddings.append(embedding)
+            if len(pending_embeddings) >= pending_batch_size:
+                faiss_index.add(np.vstack(pending_embeddings).astype('float32'))
+                pending_embeddings.clear()
+
             UUID_TO_EMBEDDING[uuid_str] = embedding
             UUID_TO_META[uuid_str] = {
                 'country_code': video.get('country_code', 'US'),
@@ -114,14 +125,15 @@ async def initialize_faiss():
     if valid_count == 0:
         raise RuntimeError("No valid embeddings found")
 
-    # Create FAISS index (IndexFlatIP = inner product = cosine after normalization)
-    embeddings_matrix = np.vstack(embeddings).astype('float32')
-    dimension = embeddings_matrix.shape[1]
+    # Flush any remaining normalized vectors.
+    if pending_embeddings:
+        faiss_index.add(np.vstack(pending_embeddings).astype('float32'))
+        pending_embeddings.clear()
 
-    FAISS_INDEX = faiss.IndexFlatIP(dimension)
-    FAISS_INDEX.add(embeddings_matrix)
+    FAISS_INDEX = faiss_index
 
-    memory_mb = embeddings_matrix.nbytes / 1e6
+    # Approximate memory used by stored float32 vectors in index.
+    memory_mb = (valid_count * (dimension or 0) * 4) / 1e6
     print(f"[FAISS] Index ready: {valid_count} videos, {dimension} dims, {memory_mb:.1f} MB")
 
 
