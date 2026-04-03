@@ -160,6 +160,29 @@ class AllChannelsResponse(BaseModel):
     total: int
 
 
+class ChannelSearchRequest(BaseModel):
+    """Request to search channels by text query"""
+    q: str
+    limit: int = 50
+
+
+class ChannelSearchResult(BaseModel):
+    """Single channel search result"""
+    id: str
+    name: str
+    handle: str
+    description: str
+    verified: bool
+    video_count: int
+    avatar: str
+
+
+class ChannelSearchResponse(BaseModel):
+    """Response containing matching channels"""
+    channels: list[ChannelSearchResult]
+    total: int
+
+
 # ======================== RELOAD FEED (LAZY LOADING) ========================
 
 
@@ -187,6 +210,21 @@ class SearchReloadRequest(BaseModel):
     excluded_video_ids: list[str] = []  # UUIDs of videos already shown
     offset: int = 0  # Pagination offset for next batch
     limit: int = 25  # Number of new videos to return (20-30)
+
+
+class ChannelPageRequest(BaseModel):
+    """Request to fetch/paginate videos for a channel derived from channel_title."""
+    channel_name: str
+    excluded_video_ids: list[str] = []
+    limit: int = 30
+
+
+class ChannelPageResponse(BaseModel):
+    """Response for a derived channel page backed by the videos table."""
+    channel: ChannelInfo
+    videos: list[VideoResponse]
+    total: int
+    has_more: bool = False
 
 
 class CategorySearchRequest(BaseModel):

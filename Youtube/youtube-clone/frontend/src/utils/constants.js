@@ -11,7 +11,7 @@ export const STORAGE_KEYS = {
 export const ROUTES = {
   HOME: '/',
   VIDEO: '/video/:id',
-  CHANNEL: '/channel/:channelId',
+  CHANNEL: '/channel/:channelName',
   SEARCH: '/search',
   SHORTS: '/shorts',
   SUBSCRIPTIONS: '/subscriptions',

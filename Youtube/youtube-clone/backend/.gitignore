@@ -44,5 +44,6 @@ Thumbs.db
 # Logs
 *.log
 
-
-**/hf_cache
+# hf_cache
+.hf-cache
+models

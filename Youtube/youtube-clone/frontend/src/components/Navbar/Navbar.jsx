@@ -6,9 +6,9 @@ import {
   AiOutlineBell,
   AiOutlineVideoCameraAdd,
 } from "react-icons/ai";
-import { BsYoutube, BsMic } from "react-icons/bs";
+import { BsMic, BsSun, BsMoon } from "react-icons/bs";
 import { FaUserCircle } from "react-icons/fa";
-import { useAuth } from "../../context";
+import { useAuth, useTheme } from "../../context";
 import { useClickOutside } from "../../hooks";
 import "./Navbar.css";
 
@@ -18,6 +18,7 @@ const Navbar = ({ toggleSidebar }) => {
   const navigate = useNavigate();
   const userMenuRef = useRef(null);
   const { user, isAuthenticated, signOut, loading } = useAuth();
+  const { isDarkMode, toggleTheme } = useTheme();
 
   // Close menu on click outside
   useClickOutside(userMenuRef, () => setShowUserMenu(false), showUserMenu);
@@ -58,7 +59,9 @@ const Navbar = ({ toggleSidebar }) => {
           <AiOutlineMenu />
         </button>
         <Link to="/" className="navbar__logo">
-          <BsYoutube className="navbar__logo-icon" />
+          <span className="navbar__logo-mark" aria-hidden="true">
+            <span className="navbar__logo-play" />
+          </span>
           <span className="navbar__logo-text">YouTube</span>
         </Link>
       </div>
@@ -83,6 +86,14 @@ const Navbar = ({ toggleSidebar }) => {
 
       {/* Right Section */}
       <div className="navbar__right">
+        <button 
+          className="navbar__icon-btn navbar__theme-toggle"
+          onClick={toggleTheme}
+          aria-label="Toggle theme"
+          title={isDarkMode ? "Light mode" : "Dark mode"}
+        >
+          {isDarkMode ? <BsSun /> : <BsMoon />}
+        </button>
         <button className="navbar__icon-btn">
           <AiOutlineVideoCameraAdd />
         </button>

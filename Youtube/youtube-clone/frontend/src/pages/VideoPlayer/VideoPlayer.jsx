@@ -36,8 +36,12 @@ const VideoPlayer = () => {
   const [dislikeCount, setDislikeCount] = useState(0);
   const [reactionPending, setReactionPending] = useState(false);
   const [isSubscribed, setIsSubscribed] = useState(false);
+  const [subscriptionLoading, setSubscriptionLoading] = useState(false);
+  const [subscriptionSuccess, setSubscriptionSuccess] = useState(false);
   const [showFullDescription, setShowFullDescription] = useState(false);
   const [expandedReplies, setExpandedReplies] = useState({});
+  const [commentDraft, setCommentDraft] = useState("");
+  const [isCommentInputActive, setIsCommentInputActive] = useState(false);
 
   // watchId: null = not started | 'pending' = INSERT in flight | uuid = INSERT done
   // watchVideoId: tracks which video the current watchId belongs to (guards fast navigation)
@@ -441,7 +445,8 @@ const VideoPlayer = () => {
 
   // Subscribe toggle
   const handleSubscribe = async () => {
-    if (!authClient || !video) return;
+    if (!authClient || !video || subscriptionLoading) return;
+    setSubscriptionLoading(true);
     try {
       if (isSubscribed) {
         await authClient.delete(API_ENDPOINTS.SUBSCRIBE, {
@@ -454,14 +459,82 @@ const VideoPlayer = () => {
         });
         setIsSubscribed(true);
       }
+
+      setSubscriptionSuccess(true);
+      window.dispatchEvent(new Event("yt:subscriptions-updated"));
+      setTimeout(() => {
+        setSubscriptionSuccess(false);
+      }, 850);
     } catch (err) {
       console.error("[VideoPlayer] Subscribe toggle failed:", err);
+    } finally {
+      setSubscriptionLoading(false);
     }
   };
 
   const toggleReplies = (commentId) => {
     setExpandedReplies((prev) => ({ ...prev, [commentId]: !prev[commentId] }));
   };
+
+  const handleCommentFocus = () => {
+    setIsCommentInputActive(true);
+  };
+
+  const handleCommentCancel = () => {
+    setCommentDraft("");
+    setIsCommentInputActive(false);
+  };
+
+  const handleCommentSubmit = (event) => {
+    event.preventDefault();
+    if (!commentDraft.trim()) return;
+
+    // Sample comments are static in this screen, so we only reset the composer UI.
+    setCommentDraft("");
+    setIsCommentInputActive(false);
+  };
+
+  const generateColorHash = (value) => {
+    const str = value || "Channel";
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = str.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const colors = [
+      ["#FF6B6B", "#FFE66D"],
+      ["#4ECDC4", "#44A08D"],
+      ["#95E1D3", "#38A169"],
+      ["#FA8072", "#FFB347"],
+      ["#87CEEB", "#4169E1"],
+      ["#DDA0DD", "#BA55D3"],
+      ["#20B2AA", "#00CED1"],
+      ["#FF69B4", "#FF1493"],
+    ];
+    return colors[Math.abs(hash) % colors.length];
+  };
+
+  const getInitials = (name) => {
+    const normalized = (name || "C").trim();
+    if (!normalized) return "C";
+    return normalized
+      .split(" ")
+      .filter(Boolean)
+      .map((part) => part[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
+  };
+
+  const getHqThumbnail = (thumbnailUrl) => {
+    if (!thumbnailUrl) return "";
+    return thumbnailUrl.replace(
+      /\/(default|mqdefault|hqdefault|sddefault|maxresdefault)\.jpg$/,
+      "/hqdefault.jpg",
+    );
+  };
+
+  const channelColors = generateColorHash(video?.channel?.name);
+  const channelInitials = getInitials(video?.channel?.name);
 
   if (loading) {
     return (
@@ -515,16 +588,22 @@ const VideoPlayer = () => {
           <div className="video-player__actions-row">
             {/* Channel Info */}
             <div className="video-player__channel-info">
-              <Link to={`/channel/${video.channel?.id}`}>
-                <img
-                  className="video-player__channel-avatar"
-                  src={video.channel?.avatar}
-                  alt={video.channel?.name}
-                />
+              <Link to={`/channel/${encodeURIComponent(video.channel?.name || "")}`}>
+                <div
+                  className="video-player__channel-avatar-fallback"
+                  style={{
+                    background: `linear-gradient(135deg, ${channelColors[0]} 0%, ${channelColors[1]} 100%)`,
+                  }}
+                  aria-label={video.channel?.name}
+                >
+                  <span className="video-player__channel-avatar-initials">
+                    {channelInitials}
+                  </span>
+                </div>
               </Link>
               <div className="video-player__channel-text">
                 <Link
-                  to={`/channel/${video.channel?.id}`}
+                  to={`/channel/${encodeURIComponent(video.channel?.name || "")}`}
                   className="video-player__channel-name"
                 >
                   {video.channel?.name}
@@ -538,10 +617,13 @@ const VideoPlayer = () => {
               </div>
               {isAuthenticated && (
                 <button
-                  className={`video-player__subscribe-btn ${isSubscribed ? "video-player__subscribe-btn--subscribed" : ""}`}
+                  className={`video-player__subscribe-btn ${isSubscribed ? "video-player__subscribe-btn--subscribed" : ""} ${subscriptionLoading ? "video-player__subscribe-btn--loading" : ""} ${subscriptionSuccess ? "video-player__subscribe-btn--success" : ""}`}
                   onClick={handleSubscribe}
+                  disabled={subscriptionLoading}
                 >
-                  {isSubscribed ? "Subscribed" : "Subscribe"}
+                  <span className="video-player__subscribe-label">
+                    {isSubscribed ? "Subscribed" : "Subscribe"}
+                  </span>
                 </button>
               )}
             </div>
@@ -617,17 +699,40 @@ const VideoPlayer = () => {
             </button>
           </div>
 
-          <div className="comment-input">
+          <form className="comment-input" onSubmit={handleCommentSubmit}>
             <img
               className="comment-input__avatar"
               src="https://ui-avatars.com/api/?name=U&background=8B5CF6&color=fff&size=40"
               alt="Your avatar"
             />
-            <input
-              className="comment-input__field"
-              placeholder="Add a comment..."
-            />
-          </div>
+            <div className="comment-input__body">
+              <input
+                className="comment-input__field"
+                placeholder="Add a comment..."
+                value={commentDraft}
+                onChange={(event) => setCommentDraft(event.target.value)}
+                onFocus={handleCommentFocus}
+              />
+              {isCommentInputActive && (
+                <div className="comment-input__actions">
+                  <button
+                    type="button"
+                    className="comment-input__cancel"
+                    onClick={handleCommentCancel}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="comment-input__submit"
+                    disabled={!commentDraft.trim()}
+                  >
+                    Comment
+                  </button>
+                </div>
+              )}
+            </div>
+          </form>
 
           {comments.map((comment) => (
             <div key={comment.id}>
@@ -711,7 +816,7 @@ const VideoPlayer = () => {
             <div className="recommendation-card__thumbnail-container">
               <img
                 className="recommendation-card__thumbnail"
-                src={rec.thumbnail}
+                src={getHqThumbnail(rec.thumbnail)}
                 alt={rec.title}
                 loading="lazy"
               />

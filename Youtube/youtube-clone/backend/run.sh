@@ -5,5 +5,7 @@
 echo "Installing dependencies..."
 pip install -r requirements.txt
 
-echo "Starting server..."
-python -m uvicorn app.main:app --reload --port 8000
+PORT="${BACKEND_PORT:-8123}"
+
+echo "Starting server on http://127.0.0.1:${PORT} ..."
+python -m uvicorn app.main:app --reload --port "${PORT}"

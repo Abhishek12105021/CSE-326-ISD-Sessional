@@ -7,12 +7,41 @@
   box-sizing: border-box;
 }
 
+/* Light Mode (Default) */
+:root.light-mode {
+  --bg-primary: #fff;
+  --bg-secondary: #f9f9f9;
+  --bg-tertiary: #f0f0f0;
+  --text-primary: #0f0f0f;
+  --text-secondary: #606060;
+  --text-tertiary: #888;
+  --border-color: #e5e5e5;
+  --hover-bg: #f0f0f0;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+/* Dark Mode */
+:root.dark-mode {
+  --bg-primary: #0f0f0f;
+  --bg-secondary: #1a1a1a;
+  --bg-tertiary: #272727;
+  --text-primary: #f1f1f1;
+  --text-secondary: #aaa;
+  --text-tertiary: #888;
+  --border-color: #303030;
+  --hover-bg: #272727;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
 body {
   font-family: "Roboto", Arial, sans-serif;
-  background-color: #fff;
-  color: #0f0f0f;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.3s, color 0.3s;
 }
 
 a {
@@ -32,6 +61,8 @@ button {
 
 .app__content {
   flex: 1;
+  min-width: 0; /* prevent flex item from expanding beyond viewport due to wide content */
+  overflow-x: clip;
   margin-left: 240px;
   padding: 16px 0;
   min-height: calc(100vh - 56px);
@@ -61,7 +92,7 @@ button {
 }
 
 body:hover ::-webkit-scrollbar-thumb {
-  background-color: #ccc;
+  background-color: var(--border-color);
 }
 
 /* Loading Spinner */
@@ -69,7 +100,7 @@ body:hover ::-webkit-scrollbar-thumb {
   display: inline-block;
   width: 32px;
   height: 32px;
-  border: 3px solid #e5e5e5;
+  border: 3px solid var(--border-color);
   border-top-color: #ff0000;
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
