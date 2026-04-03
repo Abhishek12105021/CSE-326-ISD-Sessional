@@ -32,9 +32,11 @@ import { API_ENDPOINTS } from "../../config";
 import "./Sidebar.css";
 
 const Sidebar = ({ isCollapsed }) => {
+  const SUBSCRIPTION_COLLAPSED_LIMIT = 6;
   const location = useLocation();
   const { isAuthenticated, session } = useAuth();
   const [subscribedChannels, setSubscribedChannels] = useState([]);
+  const [showAllSubscriptions, setShowAllSubscriptions] = useState(false);
 
   const loadSubscriptions = useCallback(async () => {
     if (!isAuthenticated || !session?.access_token) {
@@ -130,6 +132,16 @@ const Sidebar = ({ isCollapsed }) => {
     [subscribedChannels]
   );
 
+  useEffect(() => {
+    if (subscriptions.length <= SUBSCRIPTION_COLLAPSED_LIMIT) {
+      setShowAllSubscriptions(false);
+    }
+  }, [subscriptions.length]);
+
+  const visibleSubscriptions = showAllSubscriptions
+    ? subscriptions
+    : subscriptions.slice(0, SUBSCRIPTION_COLLAPSED_LIMIT);
+
   const exploreLinks = [
     { icon: <AiOutlineFire />, text: "Trending", path: "/trending" },
     { icon: <MdOutlineMusicNote />, text: "Music", path: "/music" },
@@ -192,7 +204,7 @@ const Sidebar = ({ isCollapsed }) => {
           {/* Subscriptions */}
           <div className="sidebar__section">
             <div className="sidebar__section-title">Subscriptions</div>
-            {subscriptions.map((sub) => (
+            {visibleSubscriptions.map((sub) => (
               <Link
                 key={sub.id}
                 to={`/channel/${encodeURIComponent(sub.name)}`}
@@ -206,6 +218,23 @@ const Sidebar = ({ isCollapsed }) => {
                 <span className="sidebar__link-text">{sub.name}</span>
               </Link>
             ))}
+
+            {subscriptions.length > SUBSCRIPTION_COLLAPSED_LIMIT && (
+              <button
+                type="button"
+                className="sidebar__subscriptions-toggle"
+                onClick={() => setShowAllSubscriptions((prev) => !prev)}
+              >
+                <span className="sidebar__link-icon">
+                  {showAllSubscriptions ? "˄" : "˅"}
+                </span>
+                <span className="sidebar__link-text">
+                  {showAllSubscriptions
+                    ? "Show less"
+                    : `Show ${subscriptions.length - SUBSCRIPTION_COLLAPSED_LIMIT} more`}
+                </span>
+              </button>
+            )}
           </div>
         </>
       )}

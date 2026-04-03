@@ -535,6 +535,24 @@ const VideoPlayer = () => {
 
   const channelColors = generateColorHash(video?.channel?.name);
   const channelInitials = getInitials(video?.channel?.name);
+  const sanitizeTag = (tag) =>
+    (tag || "")
+      .replace(/["'#]/g, "")
+      .trim();
+
+  const videoTags = Array.isArray(video?.tags)
+    ? Array.from(
+        new Set(
+          video.tags
+            .map((tag) => sanitizeTag(tag))
+            .filter(Boolean)
+        )
+      )
+    : [];
+
+  useEffect(() => {
+    setShowFullDescription(false);
+  }, [id]);
 
   if (loading) {
     return (
@@ -670,10 +688,7 @@ const VideoPlayer = () => {
         </div>
 
         {/* Description */}
-        <div
-          className="video-player__description"
-          onClick={() => setShowFullDescription(!showFullDescription)}
-        >
+        <div className="video-player__description">
           <div className="video-player__description-meta">
             <span>{video.views}</span>
             <span>{video.timestamp}</span>
@@ -683,9 +698,29 @@ const VideoPlayer = () => {
           >
             {video.description}
           </p>
-          <p className="video-player__show-more">
-            {showFullDescription ? "Show less" : "...more"}
-          </p>
+
+          {showFullDescription && videoTags.length > 0 && (
+            <div className="video-player__description-tags" aria-label="Video tags">
+              <p className="video-player__description-tags-title">Tags</p>
+              {videoTags.map((tag) => (
+                <Link
+                  key={tag}
+                  to={`/search?q=${encodeURIComponent(tag)}`}
+                  className="video-player__description-tag"
+                >
+                  {tag}
+                </Link>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="video-player__show-more-btn"
+            onClick={() => setShowFullDescription((prev) => !prev)}
+          >
+            {showFullDescription ? "Show less" : "Show more"}
+          </button>
         </div>
 
         {/* Comments Section (static sample data — no comments API) */}

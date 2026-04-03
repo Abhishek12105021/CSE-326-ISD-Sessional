@@ -112,6 +112,7 @@ def _load_sentence_transformer_fallback() -> None:
     global MODEL, MODEL_BACKEND
 
     try:
+        import torch
         from sentence_transformers import SentenceTransformer
         from torch.nn import Linear
         from torch.quantization import quantize_dynamic

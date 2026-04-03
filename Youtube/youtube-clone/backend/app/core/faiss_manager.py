@@ -1,11 +1,11 @@
 """
 FAISS-based in-memory embedding manager for fast recommendation serving.
 
-This module loads all video embeddings into RAM at server boot and provides
+This module loads a sampled subset of video embeddings into RAM at server boot and provides
 fast similarity search using Facebook's FAISS library instead of pgvector.
 
 Performance improvement: 15-20s → 300-500ms per feed request
-Memory footprint: ~100-150MB for 24K videos
+Memory footprint: ~20-30MB for a 5K sampled index
 
 Key Components:
 - FAISS_INDEX: IndexFlatIP for inner product similarity search (cosine after normalization)
@@ -41,18 +41,18 @@ USER_TASTE_VECTORS: dict[str, np.ndarray] = {}
 
 async def initialize_faiss():
     """
-    Load all video embeddings from Supabase into RAM and build FAISS index.
+    Load sampled video embeddings from Supabase into RAM and build FAISS index.
 
     Called ONCE at server boot via main.py lifespan event.
 
     Steps:
-    1. Fetch all video embeddings, country_code, velocity_score from database
+    1. Fetch a randomized subset of video embeddings, country_code, velocity_score
     2. Normalize embeddings for cosine similarity (FAISS uses inner product)
     3. Build FAISS IndexFlatIP index (exact search, no approximation)
     4. Populate UUID → embedding and UUID → metadata dictionaries
 
-    Memory footprint: ~100-150MB for 24K videos × 1024 dims
-    Boot time: Expected 3-5 seconds depending on network latency
+    Memory footprint: ~20-30MB for 5K videos × 1024 dims
+    Boot time: Expected 1-3 seconds depending on network latency
     """
     global FAISS_INDEX, UUID_TO_EMBEDDING, UUID_TO_META, INDEX_TO_UUID
 
@@ -60,16 +60,19 @@ async def initialize_faiss():
 
     from app.db import get_video_embeddings_for_boot
 
-    print("[FAISS] Loading embeddings from database...")
-    videos = await get_video_embeddings_for_boot(limit=50000)
+    print("[FAISS] Loading sampled embeddings from database...")
+    videos = await get_video_embeddings_for_boot(limit=5000)
 
     if not videos:
         raise RuntimeError("No videos found for FAISS initialization")
 
-    print(f"[FAISS] Fetched {len(videos)} videos, building index...")
+    print(f"[FAISS] Fetched {len(videos)} sampled videos, building index...")
 
-    # Build embedding matrix for FAISS
-    embeddings = []
+    # Build FAISS index incrementally to reduce peak RAM during boot.
+    faiss_index: Optional[faiss.IndexFlatIP] = None
+    pending_embeddings: list[np.ndarray] = []
+    pending_batch_size = 1024
+    dimension: Optional[int] = None
     valid_count = 0
 
     for video in videos:
@@ -99,7 +102,15 @@ async def initialize_faiss():
 
             embedding = embedding / norm
 
-            embeddings.append(embedding)
+            if faiss_index is None:
+                dimension = embedding.shape[0]
+                faiss_index = faiss.IndexFlatIP(dimension)
+
+            pending_embeddings.append(embedding)
+            if len(pending_embeddings) >= pending_batch_size:
+                faiss_index.add(np.vstack(pending_embeddings).astype('float32'))
+                pending_embeddings.clear()
+
             UUID_TO_EMBEDDING[uuid_str] = embedding
             UUID_TO_META[uuid_str] = {
                 'country_code': video.get('country_code', 'US'),
@@ -115,14 +126,15 @@ async def initialize_faiss():
     if valid_count == 0:
         raise RuntimeError("No valid embeddings found")
 
-    # Create FAISS index (IndexFlatIP = inner product = cosine after normalization)
-    embeddings_matrix = np.vstack(embeddings).astype('float32')
-    dimension = embeddings_matrix.shape[1]
+    # Flush any remaining normalized vectors.
+    if pending_embeddings:
+        faiss_index.add(np.vstack(pending_embeddings).astype('float32'))
+        pending_embeddings.clear()
 
-    FAISS_INDEX = faiss.IndexFlatIP(dimension)
-    FAISS_INDEX.add(embeddings_matrix)
+    FAISS_INDEX = faiss_index
 
-    memory_mb = embeddings_matrix.nbytes / 1e6
+    # Approximate memory used by stored float32 vectors in index.
+    memory_mb = (valid_count * (dimension or 0) * 4) / 1e6
     print(f"[FAISS] Index ready: {valid_count} videos, {dimension} dims, {memory_mb:.1f} MB")
 
 

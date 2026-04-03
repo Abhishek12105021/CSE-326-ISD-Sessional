@@ -9,6 +9,7 @@ const Home         = features.home        ? React.lazy(() => import("./pages/Hom
 const VideoPlayer  = features.videoPlayer ? React.lazy(() => import("./pages/VideoPlayer/VideoPlayer")) : null;
 const Channel      = features.channel     ? React.lazy(() => import("./pages/Channel/Channel"))         : null;
 const Search       = features.search      ? React.lazy(() => import("./pages/Search/Search"))           : null;
+const WatchHistory = features.history     ? React.lazy(() => import("./pages/WatchHistory/WatchHistory")) : null;
 
 /* Main app layout with navbar and sidebar */
 const AppLayout = ({ sidebarCollapsed, toggleSidebar }) => {
@@ -59,7 +60,7 @@ const AppLayout = ({ sidebarCollapsed, toggleSidebar }) => {
             {features.history && (
               <Route
                 path="/history"
-                element={<PlaceholderPage title="History" description="Your watch history will appear here" />}
+                element={<WatchHistory />}
               />
             )}
             {features.trending && (

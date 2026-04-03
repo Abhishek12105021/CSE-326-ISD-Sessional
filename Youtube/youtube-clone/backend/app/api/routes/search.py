@@ -60,20 +60,78 @@ def _tokenize_query(query: str) -> list[str]:
     return [token for token in re.findall(r"[a-z0-9]+", query.lower()) if token]
 
 
+def _normalize_lex_text(value: str) -> str:
+    """Normalize to lowercase alphanumeric words for lightweight lexical ranking."""
+    normalized = re.sub(r"[^a-z0-9\s]", "", (value or "").lower())
+    return re.sub(r"\s+", " ", normalized).strip()
+
+
+def _ascii_prefix_distance(query_norm: str, candidate_norm: str, max_chars: int = 8) -> int:
+    """
+    Fast lexical distance over leading characters.
+
+    Lower values mean lexicographically closer to query.
+    Uses only first max_chars characters to keep ranking very cheap.
+    """
+    if not query_norm or not candidate_norm:
+        return 10_000
+
+    q_prefix = query_norm[:max_chars]
+    c_prefix = candidate_norm[:max_chars]
+    overlap = min(len(q_prefix), len(c_prefix))
+
+    char_distance = sum(abs(ord(q_prefix[i]) - ord(c_prefix[i])) for i in range(overlap))
+    length_penalty = abs(len(q_prefix) - len(c_prefix)) * 14
+
+    return char_distance + length_penalty
+
+
+def _channel_rank_key(channel_name: str, query_norm: str, query_words: list[str]) -> tuple:
+    """
+    Ranking key (ascending):
+    1) exact normalized match
+    2) starts-with match
+    3) more query token matches
+    4) smaller ASCII prefix distance
+    5) smaller length delta
+    6) alphabetical tie-breaker
+    """
+    channel_norm = _normalize_lex_text(channel_name)
+
+    is_exact = int(channel_norm == query_norm)
+    starts_with = int(channel_norm.startswith(query_norm)) if query_norm else 0
+    token_hits = sum(1 for token in query_words if token and token in channel_norm)
+    prefix_distance = _ascii_prefix_distance(query_norm, channel_norm)
+    length_delta = abs(len(channel_norm) - len(query_norm))
+
+    return (
+        -is_exact,
+        -starts_with,
+        -token_hits,
+        prefix_distance,
+        length_delta,
+        channel_norm,
+    )
+
+
 @router.post("/search-channels", response_model=ChannelSearchResponse)
 async def search_channels(request: ChannelSearchRequest):
     """
-    Search channels using permissive ANY-word matching.
+    Search channels using permissive ANY-word matching plus lightweight lexical ranking.
 
-    Returns channels alphabetically ordered with lightweight stats so the frontend
-    can surface destination pages alongside video results.
+    Ranking is in-memory only (no DB changes):
+    - exact/prefix boosts
+    - query token coverage
+    - ASCII-prefix distance (lexical closeness)
+    - alphabetical tie-breaker
     """
     query = request.q.strip()
     if not query:
         return ChannelSearchResponse(channels=[], total=0)
 
+    query_norm = _normalize_lex_text(query)
     query_words = _tokenize_query(query)
-    if not query_words:
+    if not query_words or not query_norm:
         return ChannelSearchResponse(channels=[], total=0)
 
     try:
@@ -109,7 +167,13 @@ async def search_channels(request: ChannelSearchRequest):
                 )
             )
 
-        results.sort(key=lambda item: item.name.lower())
+        results.sort(
+            key=lambda item: _channel_rank_key(
+                channel_name=item.name,
+                query_norm=query_norm,
+                query_words=query_words,
+            )
+        )
         limited_results = results[:request.limit]
 
         return ChannelSearchResponse(channels=limited_results, total=len(results))

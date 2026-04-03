@@ -3,6 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from uuid import UUID
 from app.api.deps import get_current_user
 from app.db import get_user_by_id
 from app.schemas.feed import (
@@ -1202,8 +1203,16 @@ async def get_user_watch_history(
         # Fetch user's watch history
         history_rows = await get_watch_history(user_id, limit=limit)
 
-        # Get video UUIDs from history
-        video_uuids = [row["video_id"] for row in history_rows]
+        # Get video UUIDs from history (skip malformed legacy IDs)
+        video_uuids = []
+        for row in history_rows:
+            value = row.get("video_id")
+            if not value:
+                continue
+            try:
+                video_uuids.append(str(UUID(str(value))))
+            except (ValueError, TypeError, AttributeError):
+                continue
 
         if not video_uuids:
             return {
@@ -1220,7 +1229,12 @@ async def get_user_watch_history(
         # Combine watch history with video metadata
         watch_history = []
         for history_row in history_rows:
-            video_uuid = history_row["video_id"]
+            raw_video_uuid = history_row.get("video_id")
+            try:
+                video_uuid = str(UUID(str(raw_video_uuid)))
+            except (ValueError, TypeError, AttributeError):
+                continue
+
             video_data = video_map.get(video_uuid)
 
             if video_data:
