@@ -67,6 +67,48 @@
   font-weight: 500;
 }
 
+.sidebar__subscriptions-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 9px 12px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0));
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+  transition:
+    background-color 0.2s,
+    border-color 0.2s,
+    transform 0.2s,
+    box-shadow 0.2s;
+}
+
+.sidebar__subscriptions-toggle:hover {
+  background-color: var(--hover-bg);
+  border-color: var(--border-color);
+  box-shadow:
+    0 8px 20px rgba(0, 0, 0, 0.08),
+    inset 0 0 0 1px rgba(255, 107, 107, 0.12);
+  transform: translateY(-1px);
+}
+
+.sidebar__subscriptions-toggle .sidebar__link-icon {
+  width: 24px;
+  min-width: 24px;
+  font-size: 16px;
+  color: var(--text-secondary);
+}
+
+.sidebar__subscriptions-toggle:hover .sidebar__link-icon {
+  color: var(--text-primary);
+}
+
 .sidebar__link-icon {
   font-size: 22px;
   min-width: 24px;
