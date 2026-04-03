@@ -4,6 +4,7 @@ This bypasses the supabase-py client which has httpx compatibility issues.
 """
 import httpx
 from typing import Optional
+from uuid import UUID
 from app.config import get_settings
 
 settings = get_settings()
@@ -217,14 +218,26 @@ async def get_videos_by_uuids(uuids: list[str]) -> list[dict]:
 
     import json
 
+    valid_uuids = []
+    for uuid_value in uuids:
+        if not uuid_value:
+            continue
+        try:
+            valid_uuids.append(str(UUID(str(uuid_value))))
+        except (ValueError, TypeError, AttributeError):
+            continue
+
+    if not valid_uuids:
+        return []
+
     async with httpx.AsyncClient(timeout=30.0) as client:
         response = await client.get(
             f"{REST_URL}/videos",
             headers=HEADERS,
             params={
                 "select": "*",  # all columns including embedding
-                "id": f"in.({','.join(uuids)})",
-                "limit": len(uuids)
+                "id": f"in.({','.join(valid_uuids)})",
+                "limit": len(valid_uuids)
             }
         )
         response.raise_for_status()
