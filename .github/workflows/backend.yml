@@ -130,51 +130,7 @@ jobs:
           docker stop test-container
 
   # ===========================================================================
-  # Job 3: Deploy to Render
-  # ===========================================================================
-  deploy-render:
-    name: Deploy to Render
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    environment: production
-
-    steps:
-      - name: Trigger Render Deploy
-        run: |
-          if [ -n "${{ secrets.RENDER_DEPLOY_HOOK_URL }}" ]; then
-            curl -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
-            echo "Render deployment triggered"
-          else
-            echo "RENDER_DEPLOY_HOOK_URL not set - skipping Render deploy"
-          fi
-
-  # ===========================================================================
-  # Job 3 (Alternative): Deploy to Railway
-  # ===========================================================================
-  deploy-railway:
-    name: Deploy to Railway
-    runs-on: ubuntu-latest
-    needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.DEPLOY_TARGET == 'railway'
-    environment: production
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Deploy to Railway
-        run: |
-          cd ${{ env.WORKING_DIR }}
-          railway up --service youtube-clone-backend
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-
-  # ===========================================================================
-  # Job 3 (Alternative): Deploy to Modal
+  # Job 3 : Deploy to Modal
   # ===========================================================================
   deploy-modal:
     name: Deploy to Modal

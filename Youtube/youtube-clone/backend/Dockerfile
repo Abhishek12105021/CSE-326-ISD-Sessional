@@ -35,13 +35,7 @@ COPY --chown=appuser:appuser . .
 
 # Pre-download HuggingFace model at build time (~150MB)
 # This eliminates cold-start delays in production
-RUN python -c "\
-    from huggingface_hub import snapshot_download; \
-    snapshot_download(\
-    repo_id='lahin001/bge-m3-onnx-int8', \
-    local_dir='./models/bge-m3-onnx-int8', \
-    local_dir_use_symlinks=False \
-    )"
+RUN python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='lahin001/bge-m3-onnx-int8', local_dir='./models/bge-m3-onnx-int8', local_dir_use_symlinks=False)"
 
 # Set model cache directory to the pre-downloaded location
 ENV EMBEDDING_HF_CACHE_DIR=/app/models
