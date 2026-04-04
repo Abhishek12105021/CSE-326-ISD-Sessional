@@ -16,7 +16,7 @@ If you are using Windows PowerShell, use the included run scripts.
 ### Terminal 1: Start the Backend
 
 ```powershell
-cd "C:\D drive\L3-T2\CSE326 Information System Design Sessional\CSE-326-ISD-Sessional\Youtube\youtube-clone\backend"
+cd "CSE-326-ISD-Sessional\Youtube\youtube-clone\backend"
 Set-ExecutionPolicy -Scope Process Bypass
 .\run.ps1
 ```
@@ -30,7 +30,7 @@ What this does:
 ### Terminal 2: Start the Frontend
 
 ```powershell
-cd "C:\D drive\L3-T2\CSE326 Information System Design Sessional\CSE-326-ISD-Sessional\Youtube\youtube-clone\frontend"
+cd "CSE326 Information System Design Sessional\CSE-326-ISD-Sessional\Youtube\youtube-clone\frontend"
 Set-ExecutionPolicy -Scope Process Bypass
 .\run.ps1
 ```
@@ -61,7 +61,7 @@ Use this if you do not want to use the scripts.
 ### Backend Manual Commands
 
 ```powershell
-cd "C:\D drive\L3-T2\CSE326 Information System Design Sessional\CSE-326-ISD-Sessional\Youtube\youtube-clone\backend"
+cd "CSE-326-ISD-Sessional\Youtube\youtube-clone\backend"
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
@@ -78,7 +78,7 @@ This avoids global Python/package mismatch issues.
 ### Frontend Manual Commands
 
 ```powershell
-cd "C:\D drive\L3-T2\CSE326 Information System Design Sessional\CSE-326-ISD-Sessional\Youtube\youtube-clone\frontend"
+cd "CSE-326-ISD-Sessional\Youtube\youtube-clone\frontend"
 npm install
 npm run dev
 ```
@@ -212,14 +212,14 @@ If everything is already configured, just run:
 ### Backend
 
 ```powershell
-cd "C:\D drive\L3-T2\CSE326 Information System Design Sessional\CSE-326-ISD-Sessional\Youtube\youtube-clone\backend"
+cd "CSE-326-ISD-Sessional\Youtube\youtube-clone\backend"
 .\run.ps1
 ```
 
 ### Frontend
 
 ```powershell
-cd "C:\D drive\L3-T2\CSE326 Information System Design Sessional\CSE-326-ISD-Sessional\Youtube\youtube-clone\frontend"
+cd "CSE-326-ISD-Sessional\Youtube\youtube-clone\frontend"
 .\run.ps1
 ```
 
