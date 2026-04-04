@@ -8,9 +8,9 @@ class TestAuthProfile:
     """Tests for GET /api/auth/profile endpoint."""
 
     def test_profile_requires_authentication(self, client):
-        """Profile endpoint returns 401 without auth header."""
+        """Profile endpoint returns 403 without auth header."""
         response = client.get("/api/auth/profile")
-        assert response.status_code == 401
+        assert response.status_code == 403
 
     def test_profile_returns_user_data(self, client, mock_current_user, mock_db_user):
         """Profile endpoint returns user profile when authenticated."""
@@ -56,9 +56,9 @@ class TestAuthUpdateProfile:
     """Tests for PUT /api/auth/profile endpoint."""
 
     def test_update_profile_requires_authentication(self, client):
-        """Update profile endpoint returns 401 without auth."""
+        """Update profile endpoint returns 403 without auth."""
         response = client.put("/api/auth/profile", json={"region": "US"})
-        assert response.status_code == 401
+        assert response.status_code == 403
 
     def test_update_profile_changes_region(self, client, mock_current_user, mock_db_user):
         """Update profile endpoint updates user region."""
@@ -90,9 +90,9 @@ class TestAuthLogout:
     """Tests for POST /api/auth/logout endpoint."""
 
     def test_logout_requires_authentication(self, client):
-        """Logout endpoint returns 401 without auth."""
+        """Logout endpoint returns 403 without auth."""
         response = client.post("/api/auth/logout")
-        assert response.status_code == 401
+        assert response.status_code == 403
 
     def test_logout_returns_success_message(self, client, mock_current_user):
         """Logout endpoint returns success message."""
@@ -113,9 +113,9 @@ class TestAuthLogoutAll:
     """Tests for POST /api/auth/logout-all endpoint."""
 
     def test_logout_all_requires_authentication(self, client):
-        """Logout-all endpoint returns 401 without auth."""
+        """Logout-all endpoint returns 403 without auth."""
         response = client.post("/api/auth/logout-all")
-        assert response.status_code == 401
+        assert response.status_code == 403
 
     def test_logout_all_returns_instructions(self, client, mock_current_user):
         """Logout-all endpoint returns instructions for frontend."""
