@@ -16,6 +16,10 @@ on:
       - ".github/workflows/frontend.yml"
   workflow_dispatch: # Manual trigger
 
+permissions:
+  contents: read
+  pull-requests: write
+
 env:
   NODE_VERSION: "20"
   WORKING_DIR: Youtube/youtube-clone/frontend
