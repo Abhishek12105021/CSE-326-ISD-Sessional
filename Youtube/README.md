@@ -62,17 +62,17 @@ Create `.env` files in both directories:
 
 **`youtube-clone/frontend/.env`:**
 ```
-VITE_SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-VITE_SUPABASE_ANON_KEY=your-anon-key
+VITE_SUPABASE_URL=https://PROJECT_REF.supabase.co
+VITE_SUPABASE_ANON_KEY=anon-key
 VITE_API_URL=http://localhost:8000
 ```
 
 **`youtube-clone/backend/.env`:**
 ```
-SUPABASE_URL=https://YOUR_PROJECT_REF.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_KEY=your-service-role-key
-SUPABASE_JWT_SECRET=your-jwt-secret
+SUPABASE_URL=https://PROJECT_REF.supabase.co
+SUPABASE_ANON_KEY=anon-key
+SUPABASE_SERVICE_KEY=service-role-key
+SUPABASE_JWT_SECRET=jwt-secret
 FRONTEND_URL=http://localhost:3000
 ```
 
