@@ -25,7 +25,7 @@ model_volume = modal.Volume.from_name(
     volumes={"/models": model_volume},
     memory=4096,
     timeout=600,
-    min_containers=0,  # ✅ updated (was keep_warm)
+    min_containers=1,  # ✅ updated (was keep_warm)
 )
 @modal.concurrent(max_inputs=20)  # ✅ NEW replacement
 @modal.asgi_app()
