@@ -1303,6 +1303,34 @@ For the foreign-mix bucket, users with fewer than 10 interactions get randomly s
     \item \textbf{Database:} Supabase (\url{https://supabase.com/dashboard/project/gqpxcspldebemsbpfpfi})
 \end{itemize}
 
+\section{CI/CD Pipeline}
+
+The project employs GitHub Actions for Continuous Integration and Continuous Deployment, with separate pipelines for the frontend and backend. Both pipelines are triggered on pushes and pull requests to the \texttt{main} branch, scoped to their respective directory paths.
+
+\subsection{Backend Pipeline}
+
+The backend CI/CD pipeline handles the FastAPI application with the following stages:
+
+\begin{enumerate}
+    \item \textbf{Lint \& Test:} Sets up Python 3.11, installs dependencies from \texttt{requirements.txt}, runs \textbf{Ruff} for linting, executes \textbf{pytest} for unit tests (with mocked Supabase credentials), and verifies that the application module imports correctly.
+    \item \textbf{Deploy to Modal:} On successful tests and a push to \texttt{main}, the pipeline deploys the backend to \textbf{Modal} using the Modal CLI. Deployment is gated by the \texttt{DEPLOY\_TARGET} repository variable.
+\end{enumerate}
+
+\textbf{Required Secrets:} \texttt{MODAL\_TOKEN\_ID}, \texttt{MODAL\_TOKEN\_SECRET}, and Supabase-related environment variables for the test stage.
+
+\subsection{Frontend Pipeline}
+
+The frontend CI/CD pipeline manages the React + Vite single-page application:
+
+\begin{enumerate}
+    \item \textbf{Lint \& Test:} Sets up Node.js 20, installs dependencies via \texttt{npm ci}, runs \textbf{ESLint} for linting, and executes \textbf{Vitest} for unit tests with dummy environment variables.
+    \item \textbf{Build:} Produces a production bundle using \texttt{npm run build} with Supabase and API URL secrets injected at build time. The resulting \texttt{dist/} artifact is uploaded for subsequent jobs.
+    \item \textbf{Deploy (Production):} On pushes to \texttt{main}, the pipeline uses the \textbf{Vercel CLI} to pull the production environment configuration, build, and deploy with the \texttt{--prod} flag.
+    \item \textbf{Deploy (Preview):} On pull requests, a preview deployment is created on Vercel and the preview URL is automatically posted as a comment on the PR.
+\end{enumerate}
+
+\textbf{Required Secrets:} \texttt{VERCEL\_TOKEN}, \texttt{VERCEL\_ORG\_ID}, \texttt{VERCEL\_PROJECT\_ID}, \texttt{VITE\_SUPABASE\_URL}, \texttt{VITE\_SUPABASE\_ANON\_KEY}, and \texttt{VITE\_API\_URL}.
+
 \pagebreak
 
 \section{Feature Implementation Contribution Summary}
@@ -1313,12 +1341,12 @@ For the foreign-mix bucket, users with fewer than 10 interactions get randomly s
         \toprule
         \textbf{Member} & \textbf{Specific Implementation Contributions} \\
         \midrule
-        \textbf{Nawriz Ahmed Turjo (2105032)} & Frontend and API Integration, Filtering Implementation, FAISS Optimization and Hosting \\
+        \textbf{Nawriz Ahmed Turjo (2105032)} & Frontend , API Integration, FAISS Optimization , Hosting and CD \\
         \textbf{Abhishek Roy (2105033)} & Dataset curation, Database Hosting and Population, Frontend and UI-UX, Recommendation Engine \\
         \textbf{Monjur Hossain Khan (2105043)} & Base Frontend UI, Authentication, Database Creation, Hosting \\
-        \textbf{Shams Hossain Simanto (2105048)} & Backend, API Creation, Recommendation Engine \\
+        \textbf{Shams Hossain Simanto (2105048)} & Backend, API Endpoint Creation, Recommendation Engine \\
         \textbf{Amit Saha (2105049)} & CI/CD Pipeline, API Unit Test Integration \\
-        \textbf{Md. Abrar Jahin (2105055)} & Backend, API Creation, Recommendation Engine, Model Quantization \\
+        \textbf{Md. Abrar Jahin (2105055)} & Backend, API Endpoint Creation, Recommendation Engine, Model Quantization \\
         \bottomrule
     \end{tabularx}
 \end{table}
