@@ -1,11 +1,13 @@
-from fastapi import Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from jose import jwt, jwk
-from jose.exceptions import JWTError, JWKError
-from typing import Optional
 from datetime import datetime
-import httpx
 from functools import lru_cache
+from typing import Optional
+
+import httpx
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from jose import jwk, jwt
+from jose.exceptions import JWKError, JWTError
+
 from app.config import get_settings
 
 settings = get_settings()

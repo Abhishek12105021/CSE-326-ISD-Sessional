@@ -2,8 +2,10 @@
 Simple database client using httpx to call Supabase REST API directly.
 This bypasses the supabase-py client which has httpx compatibility issues.
 """
-import httpx
 from typing import Optional
+
+import httpx
+
 from uuid import UUID
 from app.config import get_settings
 
@@ -622,9 +624,9 @@ async def update_watch_history(watch_id: str, watch_duration_seconds: int) -> bo
                 json=payload
             )
             response.raise_for_status()
-            print(f"[DEBUG] Successfully updated watch_history")
+            print("[DEBUG] Successfully updated watch_history")
             return True
-        except Exception as e:
+        except Exception:
             print(f"[ERROR] update_watch_history PATCH failed - watch_id: {watch_id}, payload: {payload}")
             print(f"[ERROR] Response status: {response.status_code if 'response' in locals() else 'N/A'}")
             print(f"[ERROR] Response text: {response.text if 'response' in locals() else 'N/A'}")
@@ -650,7 +652,7 @@ async def delete_watch_history(watch_id: str) -> bool:
             )
             response.raise_for_status()
             return True
-        except Exception as e:
+        except Exception:
             print(f"[ERROR] delete_watch_history failed - watch_id: {watch_id}")
             print(f"[ERROR] Response status: {response.status_code if 'response' in locals() else 'N/A'}")
             print(f"[ERROR] Response text: {response.text if 'response' in locals() else 'N/A'}")
@@ -1167,7 +1169,7 @@ async def add_like(user_id: str, video_id: str) -> bool:
         is_disliked = await is_video_disliked(user_id, video_id)
 
         if is_disliked:
-            print(f"[DEBUG] Video was disliked, removing dislike first")
+            print("[DEBUG] Video was disliked, removing dislike first")
             await remove_dislike(user_id, video_id)
 
         payload = {
@@ -1188,10 +1190,10 @@ async def add_like(user_id: str, video_id: str) -> bool:
             if response.status_code in (200, 201, 409):
                 # Only increment if this is a new like (status 201), not a duplicate (409)
                 if response.status_code == 201:
-                    print(f"[DEBUG] New like created, incrementing video like count")
+                    print("[DEBUG] New like created, incrementing video like count")
                     await increment_video_likes(video_id)
                 elif response.status_code == 409:
-                    print(f"[DEBUG] Like already exists (conflict), skipping increment")
+                    print("[DEBUG] Like already exists (conflict), skipping increment")
                 return True
             return False
         except Exception as e:
@@ -1232,7 +1234,7 @@ async def remove_like(user_id: str, video_id: str) -> bool:
                     if deleted_count > 0:
                         await decrement_video_likes(video_id)
                     return deleted_count > 0
-                except:
+                except Exception:
                     # If we can't parse response but got 200, assume success and decrement
                     await decrement_video_likes(video_id)
                     return True
@@ -1323,7 +1325,7 @@ async def add_dislike(user_id: str, video_id: str) -> bool:
         is_liked = await is_video_liked(user_id, video_id)
 
         if is_liked:
-            print(f"[DEBUG] Video was liked, removing like first")
+            print("[DEBUG] Video was liked, removing like first")
             await remove_like(user_id, video_id)
 
         payload = {
@@ -1344,10 +1346,10 @@ async def add_dislike(user_id: str, video_id: str) -> bool:
             if response.status_code in (200, 201, 409):
                 # Only increment if this is a new dislike (status 201), not a duplicate (409)
                 if response.status_code == 201:
-                    print(f"[DEBUG] New dislike created, incrementing video dislike count")
+                    print("[DEBUG] New dislike created, incrementing video dislike count")
                     await increment_video_dislikes(video_id)
                 elif response.status_code == 409:
-                    print(f"[DEBUG] Dislike already exists (conflict), skipping increment")
+                    print("[DEBUG] Dislike already exists (conflict), skipping increment")
                 return True
             return False
         except Exception as e:
@@ -1388,7 +1390,7 @@ async def remove_dislike(user_id: str, video_id: str) -> bool:
                     if deleted_count > 0:
                         await decrement_video_dislikes(video_id)
                     return deleted_count > 0
-                except:
+                except Exception:
                     # If we can't parse response but got 200, assume success and decrement
                     await decrement_video_dislikes(video_id)
                     return True
@@ -1586,7 +1588,7 @@ async def unsubscribe(user_id: str, channel_id: str) -> bool:
                     deleted_count = len(data) if isinstance(data, list) else 1
                     print(f"[DEBUG] Deleted {deleted_count} subscription rows")
                     return deleted_count > 0
-                except:
+                except Exception:
                     return True  # 200 OK means deletion was processed
             # 204 No Content also indicates success
             return True

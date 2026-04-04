@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
-
 ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
 
 

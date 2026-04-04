@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Depends, Query, HTTPException, status
-from typing import Optional
 import time
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+
 from uuid import UUID
 from app.api.deps import get_current_user
 from app.db import get_user_by_id
@@ -13,22 +15,62 @@ from app.schemas.feed import (
     DeleteWatchHistoryRequest, ReloadFeedRequest, ChannelPageRequest, ChannelPageResponse
 )
 from app.core.recommendation import (
-    get_taste_vector_for_feed,
     generate_phase1_feed,
     generate_phase2_feed,
-    generate_phase3_feed
+    generate_phase3_feed,
+    get_taste_vector_for_feed,
 )
 from app.db import (
-    get_watch_history, get_unique_categories, get_videos_by_uuids, get_videos_metadata_by_uuids,
-    get_user_liked_videos, add_like, remove_like, is_video_liked,
-    get_user_disliked_videos, add_dislike, remove_dislike, is_video_disliked,
-    get_all_channels, get_user_subscribed_channels, subscribe, unsubscribe, is_subscribed,
-    insert_watch_history, update_watch_history, delete_watch_history, get_watch_record_by_id,
-    increment_video_views, decrement_video_views,
-    get_user_liked_videos_with_timestamps, get_user_by_id,
+    add_dislike,
+    add_like,
+    decrement_video_views,
+    delete_watch_history,
+    get_all_channels,
+    get_unique_categories,
+    get_user_by_id,
+    get_user_disliked_videos,
+    get_user_liked_videos,
+    get_user_liked_videos_with_timestamps,
+    get_user_subscribed_channels,
+    get_videos_by_uuids,
+    get_videos_metadata_by_uuids,
+    get_watch_history,
+    get_watch_record_by_id,
+    increment_video_views,
+    insert_watch_history,
+    is_subscribed,
+    is_video_disliked,
+    is_video_liked,
+    remove_dislike,
+    remove_like,
+    subscribe,
+    unsubscribe,
+    update_watch_history,
     get_videos_by_channel_title, get_channel_video_count
 )
-from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, is_verified
+from app.schemas.feed import (
+    AllChannelsResponse,
+    CategoriesResponse,
+    ChannelInfo,
+    DeleteWatchHistoryRequest,
+    DislikeResponse,
+    DislikesListResponse,
+    DislikeVideoRequest,
+    FeedResponse,
+    LikeResponse,
+    LikesListResponse,
+    LikeVideoRequest,
+    ReloadFeedRequest,
+    SubscribedChannelsResponse,
+    SubscribeRequest,
+    SubscriptionResponse,
+    VideoMetadataRequest,
+    VideoMetadataResponse,
+    VideoResponse,
+    WatchEventRequest,
+    WatchEventResponse,
+)
+from app.utils.formatters import format_timestamp, format_views, generate_channel_avatar, is_verified
 
 router = APIRouter()
 
@@ -164,7 +206,7 @@ async def get_feed(
 
     # Step 1: Fetch user profile for region preference
     step_start = time.time()
-    db_user = await get_user_by_id(user_id)
+    _db_user = await get_user_by_id(user_id)  # noqa: F841 - fetched for potential future use
     user_region = region or "US"
     print(f"[DEBUG] User profile fetched - user_id: {user_id}, region: {user_region}")
     # print(f"[DEBUG] region available in query: {region}, user profile region: {db_user.get('region') if db_user else 'N/A'}")
@@ -198,19 +240,19 @@ async def get_feed(
     step_start = time.time()
     if interaction_count == 0:
         strategy = "phase_1_cold_start"
-        print(f"[FEED Step 4/5] Phase 1 (Cold Start): Generating trending feed...")
+        print("[FEED Step 4/5] Phase 1 (Cold Start): Generating trending feed...")
         video_uuids = await generate_phase1_feed(user_region, watched_uuids, limit)
 
     elif 1 <= interaction_count <= 4:
         strategy = "phase_2_warm_up"
-        print(f"[FEED Step 4/5] Phase 2 (Warm-Up): Generating mixed feed...")
+        print("[FEED Step 4/5] Phase 2 (Warm-Up): Generating mixed feed...")
         video_uuids = await generate_phase2_feed(
             taste, user_region, watched_uuids, interaction_count, limit
         ) if taste is not None else await generate_phase1_feed(user_region, watched_uuids, limit)
 
     else:  # 5+ interactions - Fully personalized
         strategy = "phase_3_personalized"
-        print(f"[FEED Step 4/5] Phase 3 (Personalized): Generating semantic feed...")
+        print("[FEED Step 4/5] Phase 3 (Personalized): Generating semantic feed...")
         video_uuids = await generate_phase3_feed(
             taste, user_region, watched_uuids, interaction_count, limit
         ) if taste is not None else await generate_phase1_feed(user_region, watched_uuids, limit)
@@ -279,7 +321,7 @@ async def reload_feed(
 
     # Step 1: Fetch user profile for region preference
     step_start = time.time()
-    db_user = await get_user_by_id(user_id)
+    _db_user = await get_user_by_id(user_id)  # noqa: F841 - fetched for potential future use
     user_region = region or "US"
     step_elapsed = (time.time() - step_start) * 1000
     print(f"[RELOAD Step 1/5] Fetched user profile, region={user_region} ({step_elapsed:.1f}ms)")
@@ -316,19 +358,19 @@ async def reload_feed(
     step_start = time.time()
     if interaction_count == 0:
         strategy = "phase_1_cold_start"
-        print(f"[RELOAD Step 4/5] Phase 1 (Cold Start): Generating trending feed...")
+        print("[RELOAD Step 4/5] Phase 1 (Cold Start): Generating trending feed...")
         video_uuids = await generate_phase1_feed(user_region, all_excluded, limit)
 
     elif 1 <= interaction_count <= 4:
         strategy = "phase_2_warm_up"
-        print(f"[RELOAD Step 4/5] Phase 2 (Warm-Up): Generating mixed feed...")
+        print("[RELOAD Step 4/5] Phase 2 (Warm-Up): Generating mixed feed...")
         video_uuids = await generate_phase2_feed(
             taste, user_region, all_excluded, interaction_count, limit
         ) if taste is not None else await generate_phase1_feed(user_region, all_excluded, limit)
 
     else:  # 5+ interactions - Fully personalized
         strategy = "phase_3_personalized"
-        print(f"[RELOAD Step 4/5] Phase 3 (Personalized): Generating semantic feed...")
+        print("[RELOAD Step 4/5] Phase 3 (Personalized): Generating semantic feed...")
         video_uuids = await generate_phase3_feed(
             taste, user_region, all_excluded, interaction_count, limit
         ) if taste is not None else await generate_phase1_feed(user_region, all_excluded, limit)
@@ -1068,7 +1110,7 @@ async def track_watch_event(
     try:
         # MODE 1: INSERT (video start) - no watch_id provided
         if not request.watch_id:
-            print(f"[DEBUG] INSERT mode - creating new watch record")
+            print("[DEBUG] INSERT mode - creating new watch record")
 
             watch_id = await insert_watch_history(
                 user_id=user_id,  # Authenticated user
@@ -1088,7 +1130,7 @@ async def track_watch_event(
             # Update taste vector incrementally via EMA (O(1) operation)
             from app.core import faiss_manager
             try:
-                updated_taste = faiss_manager.update_taste_vector(user_id, video_uuid)
+                faiss_manager.update_taste_vector(user_id, video_uuid)
                 print(f"[TASTE VECTOR] Incremental EMA update completed for user {user_id[:8]}")
             except ValueError as e:
                 # Video not found in FAISS index (rare edge case - video added after boot)
@@ -1117,7 +1159,7 @@ async def track_watch_event(
                     detail="Failed to update watch duration"
                 )
 
-            print(f"[DEBUG] Successfully updated watch record")
+            print("[DEBUG] Successfully updated watch record")
 
             return WatchEventResponse(
                 watch_id=request.watch_id,

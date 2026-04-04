@@ -1,5 +1,6 @@
-from pydantic import BaseModel
 from typing import Optional
+
+from pydantic import BaseModel
 
 
 class ChannelInfo(BaseModel):
@@ -65,7 +66,7 @@ class CategoriesResponse(BaseModel):
 class VideoMetadataRequest(BaseModel):
     """Request to get complete video metadata by UUID"""
     video_uuid: str  # UUID from videos.id
-    
+
 class VideoMetadataResponse(BaseModel):
     """Complete video metadata response with all available information"""
     id: str  # UUID from videos.id

@@ -11,8 +11,10 @@ Key:
 - embed_batch(texts): Batch embed multiple queries
 """
 import os
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+import torch
 
 # ==================== GLOBAL MODEL ====================
 
@@ -72,9 +74,9 @@ def _load_hf_onnx_backend() -> None:
     """Download/load quantized ONNX artifacts from Hugging Face and initialize ORT."""
     global MODEL_BACKEND, ORT_SESSION, TOKENIZER, ORT_INPUT_NAMES
 
+    import onnxruntime as ort
     from huggingface_hub import snapshot_download
     from transformers import AutoTokenizer
-    import onnxruntime as ort
 
     print(f"[EMBEDDING] Loading HF ONNX repo: {HF_ONNX_REPO_ID}")
 
@@ -112,8 +114,8 @@ def _load_sentence_transformer_fallback() -> None:
     try:
         import torch
         from sentence_transformers import SentenceTransformer
-        from torch.quantization import quantize_dynamic
         from torch.nn import Linear
+        from torch.quantization import quantize_dynamic
 
         print("[EMBEDDING] Fallback stage 1/3: downloading/loading BAAI/bge-m3 on CPU...")
 
@@ -134,7 +136,7 @@ def _load_sentence_transformer_fallback() -> None:
 
         print("[EMBEDDING] Fallback stage 3/3: model ready")
         print("[EMBEDDING] Model loaded successfully (int8 quantized, ~600MB)")
-        print(f"[EMBEDDING] Device: cpu | Precision: int8 (dynamic)")
+        print("[EMBEDDING] Device: cpu | Precision: int8 (dynamic)")
 
     except Exception as e:
         print(f"[EMBEDDING ERROR] Failed to load quantized model: {e}")

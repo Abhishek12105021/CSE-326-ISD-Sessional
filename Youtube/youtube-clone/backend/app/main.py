@@ -1,8 +1,10 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
+
+from app.api.routes import auth, feed, guest, search
 from app.config import get_settings
-from app.api.routes import auth, guest, feed, search
 
 settings = get_settings()
 
@@ -22,7 +24,7 @@ async def lifespan(app: FastAPI):
     """
     # Startup
     print("[BOOT] Initializing FAISS index...")
-    from app.core import faiss_manager, embedding_service
+    from app.core import embedding_service, faiss_manager
     await faiss_manager.initialize_faiss()
 
     # Print stats

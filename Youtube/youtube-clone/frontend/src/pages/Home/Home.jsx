@@ -568,7 +568,7 @@ const Home = () => {
 
       {!hasMore && videos.length > 0 && (
         <div style={{ textAlign: "center", padding: "24px", color: "#606060" }}>
-          <p>You've reached the end</p>
+          <p>You&apos;ve reached the end</p>
         </div>
       )}
     </div>

@@ -1,13 +1,12 @@
-import numpy as np
 import random
 import time
+from datetime import datetime
 from typing import Optional
-from datetime import datetime, timedelta
-from app.db import (
-    get_watch_history,
-    get_user_liked_videos_with_timestamps
-)
+
+import numpy as np
+
 from app.core import faiss_manager
+from app.db import get_user_liked_videos_with_timestamps, get_videos_by_uuids, get_watch_history
 
 # Weight multiplier for liked videos (explicit positive signal)
 LIKE_WEIGHT_MULTIPLIER = 2.0
@@ -16,6 +15,11 @@ LIKE_WEIGHT_MULTIPLIER = 2.0
 # Videos from 14 days ago get ~0.5 weight of today
 # Videos from 30 days ago still get ~0.15 weight (meaningful contribution)
 DECAY_SECONDS = 14 * 24 * 3600
+
+# Country affinity cache TTL (1 hour in seconds)
+_CACHE_TTL_SECONDS = 3600
+_COUNTRY_AFFINITY_CACHE: dict[str, float] = {}
+_CACHE_TIMESTAMP: datetime | None = None
 
 
 def _compute_time_decay(timestamp_str: Optional[str], now: datetime) -> float:
@@ -74,7 +78,7 @@ async def get_taste_vector_for_feed(user_id: str) -> tuple[Optional[np.ndarray],
         # Get interaction count from history (fast, metadata only)
         watch_history = await get_watch_history(user_id, limit=1000)
         liked_videos = await get_user_liked_videos_with_timestamps(user_id, limit=500)
-        interaction_count = len(set([h["video_id"] for h in watch_history] + [l["video_id"] for l in liked_videos]))
+        interaction_count = len(set([h["video_id"] for h in watch_history] + [like["video_id"] for like in liked_videos]))
         print(f"[TASTE VECTOR] Using cached taste vector for user {user_id[:8]} ({interaction_count} interactions)")
         return cached_taste, interaction_count
 
@@ -114,8 +118,6 @@ async def get_taste_vector_for_feed(user_id: str) -> tuple[Optional[np.ndarray],
 
         # Keep max weight if video appears multiple times
         video_weights[video_id] = max(video_weights.get(video_id, 0), weight)
-
-    watched_count = len(video_weights)
 
     # Process liked videos (with multiplier)
     liked_added = 0
@@ -429,7 +431,7 @@ def _compute_recency_weights(watch_history: list[dict], n_videos: int) -> np.nda
                 watch_time = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
                 age_seconds = max(0, (now - watch_time).total_seconds())
                 time_decay = np.exp(-age_seconds / DECAY_SECONDS)
-            except:
+            except Exception:
                 time_decay = 1.0
 
         # Duration boost: fully watched videos (60% of content) get +50%
@@ -470,6 +472,10 @@ async def compute_country_affinity(
     6. Cache result
 
     Returns: {"GB": 0.5941, "CA": 0.5783, ...}
+
+    NOTE: Currently returns neutral affinity (0.5) for all countries as
+    get_all_country_embeddings is not implemented. Country affinity is
+    computed in faiss_manager.get_country_affinity() instead.
     """
     global _COUNTRY_AFFINITY_CACHE, _CACHE_TIMESTAMP
 
@@ -479,32 +485,9 @@ async def compute_country_affinity(
         # Return cached values for requested countries
         return {c: _COUNTRY_AFFINITY_CACHE.get(c, 0.5) for c in foreign_countries}
 
-    # Recompute affinity for all countries
-    taste_vector = taste_vector.flatten()
-    country_affinity = {}
-
-    for country in foreign_countries:
-        try:
-            # Fetch embeddings (RPC will sample if needed)
-            embeddings = await get_all_country_embeddings(country)
-
-            if not embeddings:
-                country_affinity[country] = 0.5  # neutral affinity
-                continue
-
-            # Sample ~500 embeddings if there are more
-            if len(embeddings) > 500:
-                sample_indices = np.random.choice(len(embeddings), size=500, replace=False)
-                embeddings = [embeddings[i] for i in sample_indices]
-
-            vecs = np.array(embeddings, dtype=np.float32)
-            sims = np.dot(vecs, taste_vector)
-            affinity = float(np.mean(sims))
-            country_affinity[country] = affinity
-        except Exception as e:
-            # On error, assign neutral affinity
-            print(f"[WARNING] Failed to compute affinity for {country}: {e}")
-            country_affinity[country] = 0.5
+    # Return neutral affinity for all countries (fallback implementation)
+    # Real affinity computation is done via faiss_manager.get_country_affinity()
+    country_affinity = {country: 0.5 for country in foreign_countries}
 
     # Cache results
     _COUNTRY_AFFINITY_CACHE = country_affinity

@@ -13,10 +13,10 @@ Key Components:
 - UUID_TO_META: Dict with country_code and velocity_score for filtering
 - USER_TASTE_VECTORS: In-memory taste vectors updated incrementally via EMA
 """
-import numpy as np
-import faiss
 from typing import Optional
-from uuid import UUID
+
+import faiss
+import numpy as np
 
 # ==================== GLOBAL IN-MEMORY STRUCTURES ====================
 
@@ -56,8 +56,9 @@ async def initialize_faiss():
     """
     global FAISS_INDEX, UUID_TO_EMBEDDING, UUID_TO_META, INDEX_TO_UUID
 
-    from app.db import get_video_embeddings_for_boot
     import json
+
+    from app.db import get_video_embeddings_for_boot
 
     print("[FAISS] Loading sampled embeddings from database...")
     videos = await get_video_embeddings_for_boot(limit=5000)

@@ -4,7 +4,6 @@ import {
   AiOutlineHome,
   AiFillHome,
   AiOutlineLike,
-  AiOutlineClockCircle,
   AiOutlineFire,
   AiOutlinePlaySquare,
 } from "react-icons/ai";
@@ -27,7 +26,6 @@ import {
   MdOutlineSettings,
 } from "react-icons/md";
 import { SiYoutubeshorts } from "react-icons/si";
-import { BiTrendingUp } from "react-icons/bi";
 import { useAuth } from "../../context";
 import { apiService } from "../../services";
 import { API_ENDPOINTS } from "../../config";

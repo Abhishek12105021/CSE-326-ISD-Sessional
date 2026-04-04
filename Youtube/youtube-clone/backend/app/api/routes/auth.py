@@ -1,12 +1,8 @@
 from fastapi import APIRouter, Depends
-from app.schemas.auth import (
-    UserProfile,
-    UpdateProfileRequest,
-    MigrateGuestRequest,
-    MessageResponse
-)
+
 from app.api.deps import get_current_user
 from app.db import get_user_by_id, update_user, upsert_user
+from app.schemas.auth import MessageResponse, UpdateProfileRequest, UserProfile
 
 # /api/auth/*
 

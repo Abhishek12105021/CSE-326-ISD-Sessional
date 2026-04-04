@@ -13,18 +13,26 @@ Endpoints:
 - POST /search-by-region → Search videos filtered by regions
 - POST /reload-search-by-region → Lazy load region-filtered search results
 """
-from fastapi import APIRouter, Query, HTTPException, status
 import asyncio
 import re
-import numpy as np
-from uuid import UUID
-from typing import Optional
-import time
+
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core import embedding_service, faiss_manager
-from app.db import get_videos_metadata_by_uuids, get_videos_by_categories, get_videos_by_regions, get_all_channels, get_channel_stats
-from app.schemas.feed import VideoResponse, ChannelInfo, SearchReloadRequest, ReloadRecommendRequest, CategorySearchRequest, RegionSearchRequest, FilterHomeFeedRequest, ChannelSearchRequest, ChannelSearchResponse, ChannelSearchResult
-from app.utils.formatters import format_views, format_timestamp, generate_channel_avatar, generate_channel_handle, generate_channel_description, is_verified
+from app.db import get_videos_by_categories, get_videos_by_regions, get_videos_metadata_by_uuids
+from app.schemas.feed import (
+    CategorySearchRequest,
+    ChannelInfo,
+    ChannelSearchRequest,
+    ChannelSearchResponse,
+    ChannelSearchResult,
+    FilterHomeFeedRequest,
+    RegionSearchRequest,
+    ReloadRecommendRequest,
+    SearchReloadRequest,
+    VideoResponse,
+)
+from app.utils.formatters import format_timestamp, format_views, generate_channel_avatar, is_verified
 
 router = APIRouter()
 
@@ -283,7 +291,7 @@ async def search_videos(
         uuid_to_video = {v["id"]: v for v in videos_data}
 
         # Step 4: Keyword matching + Category boosting
-        print(f"[SEARCH] Re-ranking with keyword matching...")
+        print("[SEARCH] Re-ranking with keyword matching...")
 
         # Parse query keywords
         query_words = q.lower().split()
@@ -328,7 +336,7 @@ async def search_videos(
             # Category boosting score (0-0.3)
             category_boost = 0.0
             if category in category_keywords:
-                category_words = category_keywords[category]
+                # Boost if query words appear in title or category name
                 if any(w in title_lower or w in category.lower() for w in query_words):
                     category_boost = 0.2
 
@@ -457,12 +465,12 @@ async def recommend_similar_videos(
             )
 
         # Step 2: Fetch reference video metadata to extract context
-        print(f"[RECOMMEND] Fetching reference video metadata...")
+        print("[RECOMMEND] Fetching reference video metadata...")
         ref_videos = await get_videos_metadata_by_uuids([video_id])
         if not ref_videos:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Video metadata not found"
+                detail="Video metadata not found"
             )
 
         ref_video = ref_videos[0]
@@ -505,7 +513,7 @@ async def recommend_similar_videos(
         uuid_to_video = {v["id"]: v for v in videos_data}
 
         # Step 5: Shared keywords + Category affinity scoring
-        print(f"[RECOMMEND] Re-ranking by shared context...")
+        print("[RECOMMEND] Re-ranking by shared context...")
 
         scored_videos = []
         for uuid in video_uuids:
@@ -684,7 +692,7 @@ async def reload_search_results(request: SearchReloadRequest):
         print(f"{'#'*70}")
 
         # Step 1: Embed query
-        print(f"[RELOAD] Step 1: Embedding query...")
+        print("[RELOAD] Step 1: Embedding query...")
         query_embedding = embedding_service.embed_query(query)
 
         # Step 2: FAISS search (get much larger pool for pagination)
@@ -703,7 +711,7 @@ async def reload_search_results(request: SearchReloadRequest):
             }
 
         # Step 3: Filter out excluded videos and apply offset
-        print(f"[RELOAD] Step 3: Filtering excluded videos and applying offset...")
+        print("[RELOAD] Step 3: Filtering excluded videos and applying offset...")
         filtered_results = [
             (uuid_str, score) for uuid_str, score in faiss_results
             if uuid_str not in excluded_ids
@@ -732,7 +740,7 @@ async def reload_search_results(request: SearchReloadRequest):
         uuid_to_video = {v["id"]: v for v in videos_data}
 
         # Step 5: Apply same hybrid ranking as /search
-        print(f"[RELOAD] Step 5: Re-ranking with hybrid strategy...")
+        print("[RELOAD] Step 5: Re-ranking with hybrid strategy...")
 
         # Parse query keywords
         query_words = query.lower().split()
@@ -777,7 +785,7 @@ async def reload_search_results(request: SearchReloadRequest):
             # Category boosting score (0-0.3)
             category_boost = 0.0
             if category in category_keywords:
-                category_words = category_keywords[category]
+                # Boost if query words appear in title or category name
                 if any(w in title_lower or w in category.lower() for w in query_words):
                     category_boost = 0.2
 
@@ -938,12 +946,12 @@ async def reload_recommendations(request: ReloadRecommendRequest):
             )
 
         # Step 2: Fetch reference video metadata
-        print(f"[RELOAD-REC] Step 2: Fetching reference video metadata...")
+        print("[RELOAD-REC] Step 2: Fetching reference video metadata...")
         ref_videos = await get_videos_metadata_by_uuids([video_id])
         if not ref_videos:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Video metadata not found"
+                detail="Video metadata not found"
             )
 
         ref_video = ref_videos[0]
@@ -990,7 +998,7 @@ async def reload_recommendations(request: ReloadRecommendRequest):
         uuid_to_video = {v["id"]: v for v in videos_data}
 
         # Step 5: Apply same hybrid ranking as /recommend
-        print(f"[RELOAD-REC] Step 5: Re-ranking with hybrid strategy...")
+        print("[RELOAD-REC] Step 5: Re-ranking with hybrid strategy...")
 
         # Define category relationships (same as /recommend)
         related_categories = {
