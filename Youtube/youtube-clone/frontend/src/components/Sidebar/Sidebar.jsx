@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   AiOutlineHome,
@@ -63,7 +63,7 @@ const Sidebar = ({ isCollapsed }) => {
       console.error("[Sidebar] Failed to load subscriptions:", error);
       setSubscribedChannels([]);
     }
-  }, [isAuthenticated, session?.access_token]);
+  }, [isAuthenticated, session]);
 
   const isActive = (path) => location.pathname === path;
 
@@ -98,26 +98,16 @@ const Sidebar = ({ isCollapsed }) => {
   ];
 
   useEffect(() => {
-    let cancelled = false;
-
-    loadSubscriptions().catch(() => {
-      if (!cancelled) {
-        setSubscribedChannels([]);
-      }
-    });
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Async data fetching on mount, setState happens after await
+    loadSubscriptions();
 
     const handleSubscriptionsUpdated = () => {
-      loadSubscriptions().catch(() => {
-        if (!cancelled) {
-          setSubscribedChannels([]);
-        }
-      });
+      loadSubscriptions();
     };
 
     window.addEventListener("yt:subscriptions-updated", handleSubscriptionsUpdated);
 
     return () => {
-      cancelled = true;
       window.removeEventListener("yt:subscriptions-updated", handleSubscriptionsUpdated);
     };
   }, [loadSubscriptions]);
@@ -134,6 +124,7 @@ const Sidebar = ({ isCollapsed }) => {
 
   useEffect(() => {
     if (subscriptions.length <= SUBSCRIPTION_COLLAPSED_LIMIT) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Intentional: reset UI state when data shrinks
       setShowAllSubscriptions(false);
     }
   }, [subscriptions.length]);

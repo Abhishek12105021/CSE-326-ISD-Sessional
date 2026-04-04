@@ -1,19 +1,10 @@
 import time
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from uuid import UUID
 from app.api.deps import get_current_user
-from app.db import get_user_by_id
-from app.schemas.feed import (
-    FeedResponse, VideoResponse, ChannelInfo, CategoriesResponse,
-    LikeVideoRequest, LikeResponse, LikesListResponse,
-    DislikeVideoRequest, DislikeResponse, DislikesListResponse,
-    SubscribeRequest, SubscriptionResponse, SubscribedChannelsResponse, AllChannelsResponse,
-    WatchEventRequest, WatchEventResponse, VideoMetadataRequest, VideoMetadataResponse,
-    DeleteWatchHistoryRequest, ReloadFeedRequest, ChannelPageRequest, ChannelPageResponse
-)
 from app.core.recommendation import (
     generate_phase1_feed,
     generate_phase2_feed,
@@ -26,12 +17,14 @@ from app.db import (
     decrement_video_views,
     delete_watch_history,
     get_all_channels,
+    get_channel_video_count,
     get_unique_categories,
     get_user_by_id,
     get_user_disliked_videos,
     get_user_liked_videos,
     get_user_liked_videos_with_timestamps,
     get_user_subscribed_channels,
+    get_videos_by_channel_title,
     get_videos_by_uuids,
     get_videos_metadata_by_uuids,
     get_watch_history,
@@ -46,12 +39,13 @@ from app.db import (
     subscribe,
     unsubscribe,
     update_watch_history,
-    get_videos_by_channel_title, get_channel_video_count
 )
 from app.schemas.feed import (
     AllChannelsResponse,
     CategoriesResponse,
     ChannelInfo,
+    ChannelPageRequest,
+    ChannelPageResponse,
     DeleteWatchHistoryRequest,
     DislikeResponse,
     DislikesListResponse,

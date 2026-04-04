@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import { MdVerified, MdOutlineTune } from "react-icons/md";
 import { useAuth } from "../../context";

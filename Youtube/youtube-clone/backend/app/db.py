@@ -3,10 +3,10 @@ Simple database client using httpx to call Supabase REST API directly.
 This bypasses the supabase-py client which has httpx compatibility issues.
 """
 from typing import Optional
+from uuid import UUID
 
 import httpx
 
-from uuid import UUID
 from app.config import get_settings
 
 settings = get_settings()

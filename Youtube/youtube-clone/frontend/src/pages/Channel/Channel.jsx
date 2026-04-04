@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useParams, Link } from "react-router-dom";
 import { MdVerified } from "react-icons/md";
 import { VideoCard } from "../../components";
@@ -339,7 +339,7 @@ const Channel = () => {
       )}
 
       {!hasMore && videos.length > 0 && (
-        <div className="channel-page__end-state">You've reached the end</div>
+        <div className="channel-page__end-state">You&apos;ve reached the end</div>
       )}
     </div>
   );

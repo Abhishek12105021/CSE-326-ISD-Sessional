@@ -19,7 +19,13 @@ import re
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core import embedding_service, faiss_manager
-from app.db import get_videos_by_categories, get_videos_by_regions, get_videos_metadata_by_uuids
+from app.db import (
+    get_all_channels,
+    get_channel_stats,
+    get_videos_by_categories,
+    get_videos_by_regions,
+    get_videos_metadata_by_uuids,
+)
 from app.schemas.feed import (
     CategorySearchRequest,
     ChannelInfo,
@@ -32,7 +38,14 @@ from app.schemas.feed import (
     SearchReloadRequest,
     VideoResponse,
 )
-from app.utils.formatters import format_timestamp, format_views, generate_channel_avatar, is_verified
+from app.utils.formatters import (
+    format_timestamp,
+    format_views,
+    generate_channel_avatar,
+    generate_channel_description,
+    generate_channel_handle,
+    is_verified,
+)
 
 router = APIRouter()
 
