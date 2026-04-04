@@ -23,6 +23,9 @@ from app.db import get_videos_by_categories, get_videos_by_regions, get_videos_m
 from app.schemas.feed import (
     CategorySearchRequest,
     ChannelInfo,
+    ChannelSearchRequest,
+    ChannelSearchResponse,
+    ChannelSearchResult,
     FilterHomeFeedRequest,
     RegionSearchRequest,
     ReloadRecommendRequest,
