@@ -20,6 +20,10 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core import embedding_service, faiss_manager
 from app.db import get_videos_by_categories, get_videos_by_regions, get_videos_metadata_by_uuids
+# FIX: search-channel endpoint imports
+from app.db import get_all_channels, get_channel_stats
+from app.utils.formatters import generate_channel_handle, generate_channel_description
+# END FIX
 from app.schemas.feed import (
     CategorySearchRequest,
     ChannelInfo,
